@@ -1,0 +1,63 @@
+services:
+  api:
+    build:
+      context: .
+      args:
+        DEBIAN_APT_MIRROR: ${DEBIAN_APT_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian}
+        DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian-security}
+    container_name: bettafish-api
+    restart: unless-stopped
+    depends_on:
+      - db
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BETTAFISH_API_DB_PATH=/app/data/saas_api.sqlite3
+      - BETTAFISH_API_ARTIFACT_DIR=/app/data/saas_api_artifacts
+      - BETTAFISH_API_RUN_WORKERS=${BETTAFISH_API_RUN_WORKERS:-true}
+      - BETTAFISH_API_CRAWLER_ADAPTER=${BETTAFISH_API_CRAWLER_ADAPTER:-real}
+      - BETTAFISH_API_CORS_ORIGINS=${BETTAFISH_API_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000}
+      - BETTAFISH_CRAWLER_BROWSER_DATA_DIR=${BETTAFISH_CRAWLER_BROWSER_DATA_DIR:-/app/data/browser_data}
+      - BETTAFISH_CRAWLER_DB_URL=${BETTAFISH_CRAWLER_DB_URL:-}
+      - DISPLAY=${DISPLAY:-}
+      - DB_DIALECT=postgresql
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER:-bettafish}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-bettafish}
+      - DB_NAME=${POSTGRES_DB:-bettafish}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_USE_MOCKS: ${NEXT_PUBLIC_USE_MOCKS:-false}
+        NEXT_PUBLIC_WORKSPACE_ID: ${NEXT_PUBLIC_WORKSPACE_ID:-workspace_demo}
+    container_name: bettafish-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+
+  db:
+    image: postgres:15
+    container_name: bettafish-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bettafish}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bettafish}
+      POSTGRES_DB: ${POSTGRES_DB:-bettafish}
+    ports:
+      - "${POSTGRES_PORT:-5444}:5432"
+    volumes:
+      - ./db_data:/var/lib/postgresql/data
