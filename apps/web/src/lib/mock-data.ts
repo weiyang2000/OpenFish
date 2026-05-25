@@ -16,7 +16,7 @@ import type {
   SystemComponent
 } from "./types";
 
-export const WORKSPACE_ID = "workspace_mock";
+export const WORKSPACE_ID = "workspace_demo";
 
 const now = "2026-05-22T09:45:00Z";
 
@@ -128,8 +128,7 @@ export const reportTemplates: ReportTemplate[] = [
 export const reportTasks: ReportTask[] = [
   {
     id: "report_20260522_001",
-    workspaceId: "workspace_report_20260522_001",
-    tenantId: WORKSPACE_ID,
+    workspaceId: WORKSPACE_ID,
     topic: "养老服务发展趋势",
     status: "succeeded",
     progress: 100,
@@ -141,21 +140,21 @@ export const reportTasks: ReportTask[] = [
         ready: true,
         filename: "report_养老服务发展趋势.html",
         sizeBytes: 214_820,
-        downloadUrl: "/api/v1/report-tasks/report_20260522_001/exports/html?workspaceId=workspace_report_20260522_001"
+        downloadUrl: "/api/v1/report-tasks/report_20260522_001/exports/html?workspaceId=workspace_demo"
       },
       {
         format: "pdf",
         ready: true,
         filename: "report_养老服务发展趋势.pdf",
         sizeBytes: 1_024_210,
-        downloadUrl: "/api/v1/report-tasks/report_20260522_001/exports/pdf?workspaceId=workspace_report_20260522_001"
+        downloadUrl: "/api/v1/report-tasks/report_20260522_001/exports/pdf?workspaceId=workspace_demo"
       },
       {
         format: "md",
         ready: true,
         filename: "report_养老服务发展趋势.md",
         sizeBytes: 88_210,
-        downloadUrl: "/api/v1/report-tasks/report_20260522_001/exports/md?workspaceId=workspace_report_20260522_001"
+        downloadUrl: "/api/v1/report-tasks/report_20260522_001/exports/md?workspaceId=workspace_demo"
       }
     ],
     owner: {

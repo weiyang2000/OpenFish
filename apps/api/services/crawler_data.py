@@ -1,16 +1,16 @@
-"""Read-only search over crawler persistence tables."""
+"""Search and delete crawler persistence records."""
 
 from __future__ import annotations
 
 import os
 import sqlite3
-from urllib.parse import quote_plus
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from apps.api.schemas import ApiError, PLATFORM_IDS
 from apps.api.storage import Store
+from utils.runtime_database import load_runtime_database_config
 
 
 @dataclass(frozen=True)
@@ -61,8 +61,8 @@ SENTIMENT_SCORE_COLUMNS = (
     "polarity_score",
     "score",
 )
-POSITIVE_SENTIMENTS = {"positive", "pos", "+", "1", "正向", "正面", "积极", "支持", "满意", "赞同", "利好"}
-NEGATIVE_SENTIMENTS = {"negative", "neg", "-", "-1", "负向", "负面", "消极", "反对", "不满", "愤怒", "利空"}
+POSITIVE_SENTIMENTS = {"positive", "pos", "+", "1", "正向", "正面", "非常正面", "积极", "支持", "满意", "赞同", "利好"}
+NEGATIVE_SENTIMENTS = {"negative", "neg", "-", "-1", "负向", "负面", "非常负面", "消极", "反对", "不满", "愤怒", "利空"}
 NEUTRAL_SENTIMENTS = {"neutral", "neu", "0", "中性", "一般", "客观"}
 
 
@@ -95,11 +95,6 @@ class CrawlerDataService:
         sources: list[str] = []
         messages: list[str] = []
 
-        source = self._sqlite_source()
-        if source:
-            records.extend(self._query_sqlite(source, specs, query, page_size))
-            sources.append(str(source))
-
         try:
             external_records, external_source = self._query_external(specs, query, page_size)
             if external_source:
@@ -107,6 +102,11 @@ class CrawlerDataService:
             records.extend(external_records)
         except Exception as exc:
             messages.append(f"外部爬取数据库读取失败: {exc}")
+
+        source = self._sqlite_source()
+        if source:
+            records.extend(self._query_sqlite(source, specs, query, page_size))
+            sources.append(str(source))
 
         if not sources:
             return {
@@ -126,25 +126,88 @@ class CrawlerDataService:
             **({"message": "；".join(messages)} if messages else {}),
         }
 
-    def _sqlite_source(self) -> Path | None:
-        candidates: list[Path] = []
-        configured = os.getenv("BETTAFISH_CRAWLER_SQLITE_PATH")
-        if configured:
-            candidates.append(Path(configured))
-        candidates.append(
-            self.repo_root
-            / "MindSpider"
-            / "DeepSentimentCrawling"
-            / "MediaCrawler"
-            / "database"
-            / "sqlite_tables.db"
+    def delete_record(
+        self,
+        *,
+        table_name: str,
+        source_id: str,
+        platform: str | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
+        spec = self._resolve_spec(
+            table_name=table_name,
+            source_id=source_id,
+            platform=platform,
+            content_type=content_type,
         )
-        if self.store.db_path != ":memory:":
-            candidates.append(Path(self.store.db_path))
 
-        for path in candidates:
-            if path.exists() and path.is_file():
-                return path
+        deleted = 0
+        sources: list[str] = []
+        external_error: Exception | None = None
+
+        try:
+            external_deleted, external_source = self._delete_external(spec, source_id)
+            if external_deleted:
+                deleted += external_deleted
+                if external_source:
+                    sources.append(external_source)
+        except Exception as exc:
+            external_error = exc
+
+        source = self._sqlite_source()
+        if source:
+            sqlite_deleted = self._delete_sqlite(source, spec, source_id)
+            if sqlite_deleted:
+                deleted += sqlite_deleted
+                sources.append(str(source))
+
+        if deleted == 0:
+            if external_error:
+                raise ApiError(
+                    "DATABASE_ERROR",
+                    f"外部爬取数据库删除失败: {external_error}",
+                    status_code=502,
+                )
+            raise ApiError("NOT_FOUND", "Crawler data record not found", status_code=404)
+
+        return {"deleted": deleted, "sources": sources}
+
+    @staticmethod
+    def _resolve_spec(
+        *,
+        table_name: str,
+        source_id: str,
+        platform: str | None,
+        content_type: str | None,
+    ) -> TableSpec:
+        if not table_name:
+            raise ApiError("VALIDATION_ERROR", "Crawler data tableName is required", status_code=400)
+        if not source_id:
+            raise ApiError("VALIDATION_ERROR", "Crawler data sourceId is required", status_code=400)
+        if platform and platform not in PLATFORM_IDS:
+            raise ApiError("VALIDATION_ERROR", f"Unsupported platform: {platform}", status_code=400)
+        if content_type and content_type not in {"content", "comment"}:
+            raise ApiError("VALIDATION_ERROR", "Unsupported crawler data type", status_code=400)
+
+        specs = [
+            spec
+            for spec in TABLE_SPECS
+            if spec.table == table_name
+            and (not platform or spec.platform == platform)
+            and (not content_type or spec.content_type == content_type)
+        ]
+        if not specs:
+            raise ApiError("VALIDATION_ERROR", "Unsupported crawler data table", status_code=400)
+        return specs[0]
+
+    def _sqlite_source(self) -> Path | None:
+        configured = os.getenv("BETTAFISH_CRAWLER_SQLITE_PATH")
+        if not configured:
+            return None
+
+        path = Path(configured)
+        if path.exists() and path.is_file():
+            return path
         return None
 
     def _query_sqlite(
@@ -166,6 +229,24 @@ class CrawlerDataService:
 
         records.sort(key=lambda item: item.get("sortValue") or "", reverse=True)
         return records
+
+    def _delete_sqlite(
+        self,
+        db_path: Path,
+        spec: TableSpec,
+        source_id: str,
+    ) -> int:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            table_columns = self._table_columns(conn)
+            columns = table_columns.get(spec.table)
+            if not columns or spec.source_id not in columns:
+                return 0
+            cursor = conn.execute(
+                f"DELETE FROM {spec.table} WHERE CAST({spec.source_id} AS TEXT) = ?",
+                (str(source_id),),
+            )
+            return max(int(cursor.rowcount or 0), 0)
 
     def _query_external(
         self,
@@ -236,29 +317,41 @@ class CrawlerDataService:
         engine.dispose()
         return records, self._masked_db_url(db_url)
 
-    @staticmethod
-    def _external_db_url() -> str | None:
-        configured = os.getenv("BETTAFISH_CRAWLER_DB_URL")
-        if configured:
-            return configured
+    def _delete_external(self, spec: TableSpec, source_id: str) -> tuple[int, str | None]:
+        db_url = self._external_db_url()
+        if not db_url:
+            return 0, None
 
         try:
-            from config import reload_settings, settings
+            from sqlalchemy import MetaData, String, Table, cast, create_engine, delete, inspect
+        except ModuleNotFoundError:
+            return 0, None
 
-            reload_settings()
-            dialect = (settings.DB_DIALECT or "").lower()
-            host = settings.DB_HOST
-            user = settings.DB_USER
-            password = settings.DB_PASSWORD
-            name = settings.DB_NAME
-            port = settings.DB_PORT
-            if not host or host.startswith("your_") or not user or user.startswith("your_") or not name or name.startswith("your_"):
-                return None
-            if dialect in {"postgres", "postgresql"}:
-                return f"postgresql+psycopg://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{quote_plus(name)}"
-            if dialect == "mysql":
-                charset = settings.DB_CHARSET or "utf8mb4"
-                return f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{quote_plus(name)}?charset={quote_plus(charset)}"
+        engine = create_engine(db_url, pool_pre_ping=True)
+        try:
+            inspector = inspect(engine)
+            if spec.table not in set(inspector.get_table_names()):
+                return 0, self._masked_db_url(db_url)
+
+            metadata = MetaData()
+            table = Table(spec.table, metadata, autoload_with=engine)
+            if spec.source_id not in table.c:
+                return 0, self._masked_db_url(db_url)
+
+            with engine.begin() as conn:
+                result = conn.execute(
+                    delete(table).where(cast(table.c[spec.source_id], String) == str(source_id))
+                )
+                return max(int(result.rowcount or 0), 0), self._masked_db_url(db_url)
+        finally:
+            engine.dispose()
+
+    @staticmethod
+    def _external_db_url() -> str | None:
+        try:
+            config = load_runtime_database_config()
+            config.require_configured()
+            return config.sync_sqlalchemy_url()
         except Exception:
             return None
         return None

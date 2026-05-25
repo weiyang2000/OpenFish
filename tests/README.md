@@ -24,11 +24,11 @@ uv run --with pytest --with fastapi==0.110.2 --with httpx==0.28.1 \
 服务层本地启动：
 
 ```bash
-uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn apps.api.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
 ```
 
-版本化 API base 为 `http://localhost:8000/api/v1`，请求需携带
-`X-Workspace-Id`。
+版本化 API base 为 `http://localhost:8000/api/v1`。当前默认用户级
+workspace 为 `workspace_demo`，未携带 `X-Workspace-Id` 时会使用该值。
 
 ## SaaS 前端交互测试
 

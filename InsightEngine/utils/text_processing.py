@@ -303,6 +303,14 @@ def format_search_results_for_prompt(search_results: List[Dict[str, Any]],
         content = result.get('content', '')
         if content:
             truncated_content = truncate_content(content, max_length)
-            formatted_results.append(truncated_content)
+            sentiment = result.get('sentiment_label')
+            sentiment_score = result.get('sentiment_score')
+            if sentiment:
+                sentiment_text = f"情绪: {sentiment}"
+                if sentiment_score is not None:
+                    sentiment_text += f" ({sentiment_score})"
+                formatted_results.append(f"{sentiment_text}\n{truncated_content}")
+            else:
+                formatted_results.append(truncated_content)
     
     return formatted_results

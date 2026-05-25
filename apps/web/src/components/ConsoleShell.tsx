@@ -40,16 +40,24 @@ import {
   createIdentityRule,
   createReportTask,
   deleteCrawlerTask,
+  deleteCrawlerDataRecord,
   deleteIdentityRule,
   deleteReportTask,
   getCrawlerAccountLoginSession,
   listCrawlerData,
   listTaskLogs,
   loadConsoleSnapshot,
+  rerunReportTask,
   stopCrawlerTask,
   updatePlatformPolicy,
   updateSystemConfig
 } from "@/lib/openapi-client";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   ComponentStatus,
   ConfigField,
@@ -58,6 +66,7 @@ import type {
   CrawlerAccount,
   CrawlerAccountLoginSession,
   CrawlerAccountStatus,
+  CrawlerDataRecord,
   CrawlerDataPage,
   CrawlerSentiment,
   CrawlerTaskKeywordSource,
@@ -67,6 +76,7 @@ import type {
   Platform,
   PlatformId,
   PlatformPolicy,
+  ReportEngineId,
   ReportFormat,
   ReportTemplate,
   ReportTask,
@@ -113,6 +123,14 @@ const platformNames: Record<PlatformId, string> = {
   ks: "快手"
 };
 
+const reportEngineLabels: Record<ReportEngineId, string> = {
+  query: "Query Engine",
+  media: "Media Engine",
+  insight: "Insight Engine"
+};
+
+const reportEngineOptions = Object.entries(reportEngineLabels) as Array<[ReportEngineId, string]>;
+
 const loginTypeLabels: Record<PlatformPolicy["loginType"], string> = {
   qrcode: "扫码",
   phone: "手机号",
@@ -134,11 +152,16 @@ const sentimentLabels: Record<CrawlerSentiment, string> = {
   unknown: "未知"
 };
 
+const crawlerDataTypeLabels: Record<CrawlerDataRecord["contentType"], string> = {
+  content: "内容",
+  comment: "评论"
+};
+
 function classNames(...values: Array<string | false | undefined>) {
   return values.filter(Boolean).join(" ");
 }
 
-function statusTone(status: TaskStatus | ComponentStatus | CrawlerAccountStatus) {
+function statusTone(status: TaskStatus | ComponentStatus | CrawlerAccountStatus): "good" | "warn" | "bad" | "idle" {
   if (status === "running" || status === "succeeded" || status === "active") return "good";
   if (
     status === "queued" ||
@@ -155,14 +178,19 @@ function statusTone(status: TaskStatus | ComponentStatus | CrawlerAccountStatus)
 }
 
 function StatusBadge({ value }: { value: TaskStatus | ComponentStatus | CrawlerAccountStatus }) {
-  return <span className={classNames("status-badge", `tone-${statusTone(value)}`)}>{value}</span>;
+  return (
+    <Badge className="status-badge" variant={statusTone(value)}>
+      {value}
+    </Badge>
+  );
 }
 
 function SentimentBadge({ value = "unknown" }: { value?: CrawlerSentiment }) {
+  const variant = value === "positive" ? "good" : value === "negative" ? "bad" : value === "unknown" ? "warn" : "idle";
   return (
-    <span className={classNames("sentiment-badge", `sentiment-${value}`)}>
+    <Badge className={classNames("sentiment-badge", `sentiment-${value}`)} variant={variant}>
       情绪：{sentimentLabels[value]}
-    </span>
+    </Badge>
   );
 }
 
@@ -191,6 +219,53 @@ function formatCrawlerSchedule(schedule?: CrawlFrequency) {
   if (!schedule) return scheduleLabels.manual;
   if (schedule.mode === "cron") return schedule.cron ? `Cron ${schedule.cron}` : scheduleLabels.cron;
   return scheduleLabels[schedule.mode];
+}
+
+function crawlerDataRecordKey(record: Pick<CrawlerDataRecord, "tableName" | "sourceId">) {
+  return `${record.tableName}:${record.sourceId}`;
+}
+
+function summarizeCrawlerData(records: CrawlerDataRecord[]): CrawlerDataPage["summary"] {
+  return {
+    totalRecords: records.length,
+    byPlatform: records.reduce<Partial<Record<PlatformId, number>>>((acc, record) => {
+      acc[record.platformId] = (acc[record.platformId] ?? 0) + 1;
+      return acc;
+    }, {}),
+    byType: records.reduce<Partial<Record<"content" | "comment", number>>>(
+      (acc, record) => {
+        acc[record.contentType] = (acc[record.contentType] ?? 0) + 1;
+        return acc;
+      },
+      { content: 0, comment: 0 }
+    )
+  };
+}
+
+function removeCrawlerDataRecordFromPage(
+  page: CrawlerDataPage,
+  record: Pick<CrawlerDataRecord, "tableName" | "sourceId">
+): CrawlerDataPage {
+  const key = crawlerDataRecordKey(record);
+  const records = page.records.filter((item) => crawlerDataRecordKey(item) !== key);
+  return {
+    ...page,
+    records,
+    summary: summarizeCrawlerData(records)
+  };
+}
+
+function selectedReportEngines(task: ReportTask): ReportEngineId[] {
+  const engines = task.sourceScope?.orchestration?.engines;
+  if (Array.isArray(engines)) return engines.filter((engine) => engine in reportEngineLabels);
+  if (engines && typeof engines === "object") {
+    return (Object.keys(engines) as ReportEngineId[]).filter((engine) => engine in reportEngineLabels);
+  }
+  return reportEngineOptions.map(([engine]) => engine);
+}
+
+function formatReportEngines(task: ReportTask) {
+  return selectedReportEngines(task).map((engine) => reportEngineLabels[engine]).join(" / ");
 }
 
 function formatPayload(payload: Record<string, unknown>) {
@@ -255,14 +330,16 @@ function MetricTile({
   icon: React.ComponentType<{ size?: number }>;
 }) {
   return (
-    <div className="metric-tile">
-      <div className="metric-icon">
-        <Icon size={20} />
-      </div>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </div>
+    <Card className="metric-tile">
+      <CardContent className="metric-content">
+        <div className="metric-icon">
+          <Icon size={20} />
+        </div>
+        <span>{label}</span>
+        <strong>{value}</strong>
+        <small>{detail}</small>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -326,6 +403,10 @@ export function ConsoleShell() {
     loading: boolean;
     error: string | null;
   } | null>(null);
+  const [reportRerunModal, setReportRerunModal] = useState<{
+    task: ReportTask;
+    engines: Record<ReportEngineId, boolean>;
+  } | null>(null);
   const [policyDraft, setPolicyDraft] = useState<PlatformPolicy | null>(null);
   const [logSource, setLogSource] = useState<string>("all");
   const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
@@ -337,7 +418,12 @@ export function ConsoleShell() {
       md: false,
       pdf: true,
       json: false
-    } satisfies Record<ReportFormat, boolean>
+    } satisfies Record<ReportFormat, boolean>,
+    engines: {
+      query: true,
+      media: true,
+      insight: true
+    } satisfies Record<ReportEngineId, boolean>
   });
   const [crawlerForm, setCrawlerForm] = useState<{
     runMode: RunMode;
@@ -499,6 +585,14 @@ export function ConsoleShell() {
     }
   }
 
+  const removeCrawlerDataRecord = (record: CrawlerDataRecord) =>
+    runAction("爬取数据已删除", async () => {
+      await deleteCrawlerDataRecord(record);
+      setCrawlerData((current) =>
+        current ? removeCrawlerDataRecordFromPage(current, record) : current
+      );
+    });
+
   async function openTaskLogs(taskType: TaskLogType, taskId: string, title: string) {
     setTaskLogModal({ taskType, taskId, title, page: null, loading: true, error: null });
     try {
@@ -530,10 +624,20 @@ export function ConsoleShell() {
         .filter(([, enabled]) => enabled)
         .map(([format]) => format as ReportFormat);
       if (outputFormats.length === 0) throw new Error("至少选择一种导出格式");
+      const engines = Object.entries(reportForm.engines)
+        .filter(([, enabled]) => enabled)
+        .map(([engine]) => engine as ReportEngineId);
+      if (engines.length === 0) throw new Error("至少选择一个分析引擎");
 
       const task = await createReportTask({
         topic,
         templateId: reportForm.templateId,
+        sourceScope: {
+          orchestration: {
+            enabled: true,
+            engines
+          }
+        },
         outputFormats,
         owner: currentUser
       });
@@ -542,6 +646,35 @@ export function ConsoleShell() {
         reportTasks: [task, ...snapshot.reportTasks]
       });
       setReportForm((current) => ({ ...current, topic: "" }));
+    });
+
+  function openReportRerun(task: ReportTask) {
+    const engines = task.sourceScope?.orchestration?.rerunEngines?.length
+      ? task.sourceScope.orchestration.rerunEngines
+      : selectedReportEngines(task);
+    setReportRerunModal({
+      task,
+      engines: {
+        query: engines.includes("query"),
+        media: engines.includes("media"),
+        insight: engines.includes("insight")
+      }
+    });
+  }
+
+  const rerunReport = () =>
+    runAction("报告任务已重新排队", async () => {
+      if (!snapshot || !reportRerunModal) return;
+      const engines = Object.entries(reportRerunModal.engines)
+        .filter(([, enabled]) => enabled)
+        .map(([engine]) => engine as ReportEngineId);
+      if (engines.length === 0) throw new Error("至少选择一个分析引擎");
+      const updated = await rerunReportTask(reportRerunModal.task.id, { engines });
+      setSnapshot({
+        ...snapshot,
+        reportTasks: replaceReportTask(snapshot.reportTasks, updated)
+      });
+      setReportRerunModal(null);
     });
 
   const createCrawler = () =>
@@ -685,10 +818,10 @@ export function ConsoleShell() {
         <AlertTriangle size={34} />
         <strong>控制台加载失败</strong>
         <span>{error}</span>
-        <button className="primary-button" onClick={() => void load()}>
+        <Button className="primary-button" onClick={() => void load()}>
           <RefreshCcw size={16} />
           重试
-        </button>
+        </Button>
       </main>
     );
   }
@@ -711,14 +844,15 @@ export function ConsoleShell() {
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
-              <button
+              <Button
                 key={item.id}
+                variant="ghost"
                 className={classNames("nav-button", activeSection === item.id && "active")}
                 onClick={() => setActiveSection(item.id)}
               >
                 <Icon size={18} />
                 <span>{item.label}</span>
-              </button>
+              </Button>
             );
           })}
         </nav>
@@ -738,14 +872,14 @@ export function ConsoleShell() {
           <div className="topbar-actions">
             {notice && <span className="notice">{notice}</span>}
             {error && (
-              <button className="ghost-button error-inline" onClick={() => setError(null)}>
+              <Button variant="ghost" className="ghost-button error-inline" onClick={() => setError(null)}>
                 <XCircle size={16} />
                 {error}
-              </button>
+              </Button>
             )}
-            <button className="icon-button" title="刷新" onClick={() => void load()}>
+            <Button variant="outline" size="icon" className="icon-button" title="刷新" onClick={() => void load()}>
               <RefreshCcw size={18} />
-            </button>
+            </Button>
           </div>
         </header>
 
@@ -818,20 +952,20 @@ export function ConsoleShell() {
               title="报告任务"
               subtitle="基于多智能体输入生成 HTML、Markdown 与 PDF 报告"
               action={
-                <button
+                <Button
                   className="primary-button"
                   onClick={() => void createReport()}
                   disabled={busyAction !== null}
                 >
                   <FilePlus2 size={16} />
                   创建报告
-                </button>
+                </Button>
               }
             />
             <div className="form-grid report-form">
               <label className="field">
                 <span>主题</span>
-                <input
+                <Input
                   value={reportForm.topic}
                   onChange={(event) => setReportForm({ ...reportForm, topic: event.target.value })}
                   placeholder="输入报告主题"
@@ -850,6 +984,27 @@ export function ConsoleShell() {
                   ))}
                 </select>
               </label>
+              <div className="report-engine-row">
+                <span className="control-group-label">分析引擎</span>
+                {reportEngineOptions.map(([engine, label]) => (
+                  <label key={engine} className="toggle-pill">
+                    <input
+                      type="checkbox"
+                      checked={reportForm.engines[engine]}
+                      onChange={(event) =>
+                        setReportForm({
+                          ...reportForm,
+                          engines: {
+                            ...reportForm.engines,
+                            [engine]: event.target.checked
+                          }
+                        })
+                      }
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
               <div className="format-row">
                 {(Object.keys(reportForm.formats) as ReportFormat[]).map((format) => (
                   <label key={format} className="toggle-pill">
@@ -884,7 +1039,7 @@ export function ConsoleShell() {
                     >
                       <strong>{task.topic}</strong>
                       <span>
-                        {task.id} · {formatTime(task.updatedAt)}
+                        {formatReportEngines(task)} · {task.id} · {formatTime(task.updatedAt)}
                       </span>
                       <ProgressBar value={task.progress} />
                     </button>
@@ -903,15 +1058,19 @@ export function ConsoleShell() {
                       ))}
                     </div>
                     <div className="task-actions">
-                      <button
+                      <Button
+                        variant="outline"
+                        size="icon"
                         className="icon-button"
                         title="查看任务日志"
                         onClick={() => void openTaskLogs("report", task.id, task.topic)}
                       >
                         <TerminalSquare size={16} />
-                      </button>
+                      </Button>
                       {task.status === "running" ? (
-                        <button
+                        <Button
+                          variant="outline"
+                          size="icon"
                           className="icon-button danger"
                           title="取消报告任务"
                           onClick={() =>
@@ -925,10 +1084,23 @@ export function ConsoleShell() {
                           }
                         >
                           <CircleStop size={16} />
-                        </button>
+                        </Button>
+                      ) : null}
+                      {task.status !== "running" && task.status !== "pending" && task.status !== "queued" ? (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="icon-button"
+                          title="重跑报告任务"
+                          onClick={() => openReportRerun(task)}
+                        >
+                          <RefreshCcw size={16} />
+                        </Button>
                       ) : null}
                       {task.status !== "running" && task.status !== "pending" ? (
-                        <button
+                        <Button
+                          variant="outline"
+                          size="icon"
                           className="icon-button danger"
                           title="删除报告任务"
                           onClick={() =>
@@ -942,7 +1114,7 @@ export function ConsoleShell() {
                           }
                         >
                           <Trash2 size={16} />
-                        </button>
+                        </Button>
                       ) : null}
                     </div>
                   </div>
@@ -958,14 +1130,14 @@ export function ConsoleShell() {
               title="爬虫任务"
               subtitle="指定关键词与平台后发起 MindSpider 采集"
               action={
-                <button
+                <Button
                   className="primary-button"
                   onClick={() => void createCrawler()}
                   disabled={busyAction !== null}
                 >
                   <Play size={16} />
                   创建任务
-                </button>
+                </Button>
               }
             />
             <div className="account-panel">
@@ -975,10 +1147,10 @@ export function ConsoleShell() {
                   <span>{filteredCrawlerAccounts.length} / {snapshot.crawlerAccounts.length} 个账号</span>
                 </div>
                 <div className="account-filters">
-                  <button className="secondary-button" onClick={() => setShowAccountModal(true)}>
+                  <Button variant="secondary" className="secondary-button" onClick={() => setShowAccountModal(true)}>
                     <Plus size={16} />
                     增加账号
-                  </button>
+                  </Button>
                   <select
                     value={accountPlatformFilter}
                     aria-label="账号平台筛选"
@@ -1051,7 +1223,7 @@ export function ConsoleShell() {
             <div className="form-grid crawler-form">
               <label className="field wide">
                 <span>关键词</span>
-                <textarea
+                <Textarea
                   value={crawlerForm.keywords}
                   onChange={(event) => setCrawlerForm({ ...crawlerForm, keywords: event.target.value })}
                   placeholder="每行一个关键词"
@@ -1085,7 +1257,7 @@ export function ConsoleShell() {
               </label>
               <label className="field">
                 <span>开始日期</span>
-                <input
+                <Input
                   type="date"
                   value={crawlerForm.startDate}
                   onChange={(event) => setCrawlerForm({ ...crawlerForm, startDate: event.target.value })}
@@ -1093,7 +1265,7 @@ export function ConsoleShell() {
               </label>
               <label className="field">
                 <span>结束日期</span>
-                <input
+                <Input
                   type="date"
                   value={crawlerForm.endDate}
                   onChange={(event) => setCrawlerForm({ ...crawlerForm, endDate: event.target.value })}
@@ -1117,7 +1289,7 @@ export function ConsoleShell() {
               {crawlerForm.scheduleMode === "cron" ? (
                 <label className="field">
                   <span>Cron</span>
-                  <input
+                  <Input
                     value={crawlerForm.scheduleCron}
                     onChange={(event) => setCrawlerForm({ ...crawlerForm, scheduleCron: event.target.value })}
                     placeholder="0 9 * * *"
@@ -1126,7 +1298,7 @@ export function ConsoleShell() {
               ) : null}
               <label className="field">
                 <span>笔记/关键词</span>
-                <input
+                <Input
                   type="number"
                   min={1}
                   max={1000}
@@ -1138,7 +1310,7 @@ export function ConsoleShell() {
               </label>
               <label className="field">
                 <span>评论/笔记</span>
-                <input
+                <Input
                   type="number"
                   min={0}
                   max={5000}
@@ -1204,7 +1376,9 @@ export function ConsoleShell() {
                     <span>{formatNumber(task.stats.totalComments)} comments</span>
                   </div>
                   <div className="task-actions">
-                    <button
+                    <Button
+                      variant="outline"
+                      size="icon"
                       className="icon-button"
                       title="查看任务日志"
                       onClick={() =>
@@ -1216,9 +1390,11 @@ export function ConsoleShell() {
                       }
                     >
                       <TerminalSquare size={16} />
-                    </button>
+                    </Button>
                     {task.status === "running" ? (
-                      <button
+                      <Button
+                        variant="outline"
+                        size="icon"
                         className="icon-button danger"
                         title="停止爬虫任务"
                         onClick={() =>
@@ -1232,10 +1408,12 @@ export function ConsoleShell() {
                         }
                       >
                         <StopCircle size={16} />
-                      </button>
+                      </Button>
                     ) : null}
                     {task.status !== "running" && task.status !== "stopping" ? (
-                      <button
+                      <Button
+                        variant="outline"
+                        size="icon"
                         className="icon-button danger"
                         title="删除爬虫任务"
                         onClick={() =>
@@ -1249,7 +1427,7 @@ export function ConsoleShell() {
                         }
                       >
                         <Trash2 size={16} />
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                 </div>
@@ -1264,14 +1442,26 @@ export function ConsoleShell() {
               title="爬取数据库"
               subtitle="按平台、类型和关键词检索已入库的采集内容"
               action={
-                <button
-                  className="primary-button"
-                  onClick={() => void loadCrawlerData()}
-                  disabled={crawlerDataLoading}
-                >
-                  {crawlerDataLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
-                  检索
-                </button>
+                <div className="section-actions">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="icon-button"
+                    title="刷新爬取数据"
+                    onClick={() => void loadCrawlerData()}
+                    disabled={crawlerDataLoading}
+                  >
+                    {crawlerDataLoading ? <Loader2 className="spin" size={18} /> : <RefreshCcw size={18} />}
+                  </Button>
+                  <Button
+                    className="primary-button"
+                    onClick={() => void loadCrawlerData()}
+                    disabled={crawlerDataLoading}
+                  >
+                    {crawlerDataLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
+                    检索
+                  </Button>
+                </div>
               }
             />
             <div className="data-filters">
@@ -1312,7 +1502,7 @@ export function ConsoleShell() {
               </label>
               <label className="field data-query-field">
                 <span>检索词</span>
-                <input
+                <Input
                   value={crawlerDataFilters.q}
                   onChange={(event) =>
                     setCrawlerDataFilters({ ...crawlerDataFilters, q: event.target.value })
@@ -1353,13 +1543,14 @@ export function ConsoleShell() {
                     <div className="crawler-data-main">
                       <div className="crawler-data-title">
                         <strong>{record.title || record.sourceId}</strong>
-                        <StatusBadge value={record.contentType === "content" ? "running" : "queued"} />
+                        <Badge className="crawler-data-type-badge" variant="idle">
+                          {crawlerDataTypeLabels[record.contentType]}
+                        </Badge>
                         <SentimentBadge value={record.sentiment} />
                       </div>
                       <p>{record.textSnippet || "无正文摘要"}</p>
                       <div className="crawler-data-meta">
                         <span>{platformNames[record.platformId]}</span>
-                        <span>{record.tableName}</span>
                         {record.keyword && <span>{record.keyword}</span>}
                         {record.author && <span>{record.author}</span>}
                       </div>
@@ -1368,13 +1559,31 @@ export function ConsoleShell() {
                       <span>{record.metrics?.likes ?? "-"} likes</span>
                       <span>{record.metrics?.comments ?? "-"} comments</span>
                     </div>
-                    {record.url ? (
-                      <a className="icon-button" href={record.url} target="_blank" rel="noreferrer" title="打开原文">
-                        <ExternalLink size={16} />
-                      </a>
-                    ) : (
-                      <span className="row-spacer" />
-                    )}
+                    <div className="crawler-data-actions">
+                      {record.url ? (
+                        <Button
+                          asChild
+                          variant="outline"
+                          size="icon"
+                          className="icon-button"
+                          title="打开原文"
+                        >
+                          <a href={record.url} target="_blank" rel="noreferrer">
+                            <ExternalLink size={16} />
+                          </a>
+                        </Button>
+                      ) : null}
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="icon-button danger"
+                        title="删除爬取数据"
+                        onClick={() => void removeCrawlerDataRecord(record)}
+                        disabled={busyAction !== null}
+                      >
+                        <Trash2 size={16} />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1388,10 +1597,10 @@ export function ConsoleShell() {
               title="平台策略"
               subtitle="平台级爬取深度、关键词、评论数量与用户名单"
               action={
-                <button className="primary-button" onClick={() => void savePolicy()} disabled={!policyDraft}>
+                <Button className="primary-button" onClick={() => void savePolicy()} disabled={!policyDraft}>
                   <Save size={16} />
                   保存策略
-                </button>
+                </Button>
               }
             />
             <div className="platform-layout">
@@ -1417,19 +1626,16 @@ export function ConsoleShell() {
                       <h3>{selectedPlatform.name}</h3>
                       <span>{selectedPlatform.id} / {selectedPlatform.crawlerType}</span>
                     </div>
-                    <label className="switch">
-                      <input
-                        type="checkbox"
-                        checked={policyDraft.enabled}
-                        onChange={(event) => setPolicyValue("enabled", event.target.checked)}
-                      />
-                      <span />
-                    </label>
+                    <Switch
+                      checked={policyDraft.enabled}
+                      onCheckedChange={(checked) => setPolicyValue("enabled", checked)}
+                      aria-label="启用平台"
+                    />
                   </div>
                   <div className="form-grid policy-grid">
                     <label className="field">
                       <span>爬取深度</span>
-                      <input
+                      <Input
                         type="number"
                         min={1}
                         max={10}
@@ -1439,7 +1645,7 @@ export function ConsoleShell() {
                     </label>
                     <label className="field">
                       <span>关键词上限</span>
-                      <input
+                      <Input
                         type="number"
                         min={1}
                         max={500}
@@ -1449,7 +1655,7 @@ export function ConsoleShell() {
                     </label>
                     <label className="field">
                       <span>笔记/关键词</span>
-                      <input
+                      <Input
                         type="number"
                         min={1}
                         max={1000}
@@ -1459,7 +1665,7 @@ export function ConsoleShell() {
                     </label>
                     <label className="field">
                       <span>评论/笔记</span>
-                      <input
+                      <Input
                         type="number"
                         min={0}
                         max={5000}
@@ -1499,7 +1705,7 @@ export function ConsoleShell() {
                     </label>
                     <label className="field wide">
                       <span>关键词</span>
-                      <textarea
+                      <Textarea
                         value={policyDraft.keywords.join("\n")}
                         onChange={(event) =>
                           setPolicyValue(
@@ -1525,20 +1731,20 @@ export function ConsoleShell() {
                         <option value="block">block</option>
                         <option value="allow">allow</option>
                       </select>
-                      <input
+                      <Input
                         value={identityForm.userId}
                         onChange={(event) => setIdentityForm({ ...identityForm, userId: event.target.value })}
                         placeholder="平台用户 ID"
                       />
-                      <input
+                      <Input
                         value={identityForm.label}
                         onChange={(event) => setIdentityForm({ ...identityForm, label: event.target.value })}
                         placeholder="标签"
                       />
-                      <button className="secondary-button" onClick={() => void addIdentity()}>
+                      <Button variant="secondary" className="secondary-button" onClick={() => void addIdentity()}>
                         <Shield size={16} />
                         添加
-                      </button>
+                      </Button>
                     </div>
                     {selectedRules.length === 0 ? (
                       <EmptyState title="暂无名单规则" detail="allow/block 规则会影响爬取与素材筛选" />
@@ -1551,13 +1757,15 @@ export function ConsoleShell() {
                               <strong>{rule.userId}</strong>
                               <span>{rule.label || rule.reason || "未填写说明"}</span>
                             </div>
-                            <button
+                            <Button
+                              variant="outline"
+                              size="icon"
                               className="icon-button danger"
                               title="删除名单规则"
                               onClick={() => void removeIdentity(rule)}
                             >
                               <Trash2 size={16} />
-                            </button>
+                            </Button>
                           </div>
                         ))}
                       </div>
@@ -1575,10 +1783,10 @@ export function ConsoleShell() {
               title="系统配置"
               subtitle="LLM、搜索、数据库与爬虫运行参数"
               action={
-                <button className="primary-button" onClick={() => void saveConfig()}>
+                <Button className="primary-button" onClick={() => void saveConfig()}>
                   <Save size={16} />
                   保存配置
-                </button>
+                </Button>
               }
             />
             <div className="config-groups">
@@ -1611,7 +1819,7 @@ export function ConsoleShell() {
                                 ))}
                               </select>
                             ) : (
-                              <input
+                              <Input
                                 type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"}
                                 value={value}
                                 placeholder={field.sensitive ? field.value : ""}
@@ -1670,6 +1878,58 @@ export function ConsoleShell() {
         )}
       </main>
 
+      {reportRerunModal && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="rerun-report-title">
+            <div className="modal-header">
+              <div>
+                <h3 id="rerun-report-title">重跑报告任务</h3>
+                <span>{reportRerunModal.task.topic}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="icon-button"
+                title="关闭"
+                onClick={() => setReportRerunModal(null)}
+              >
+                <XCircle size={18} />
+              </Button>
+            </div>
+            <div className="report-engine-row modal-engine-row">
+              <span className="control-group-label">重跑引擎</span>
+              {reportEngineOptions.map(([engine, label]) => (
+                <label key={engine} className="toggle-pill">
+                  <input
+                    type="checkbox"
+                    checked={reportRerunModal.engines[engine]}
+                    onChange={(event) =>
+                      setReportRerunModal({
+                        ...reportRerunModal,
+                        engines: {
+                          ...reportRerunModal.engines,
+                          [engine]: event.target.checked
+                        }
+                      })
+                    }
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="modal-actions">
+              <Button variant="secondary" className="secondary-button" onClick={() => setReportRerunModal(null)}>
+                关闭
+              </Button>
+              <Button className="primary-button" onClick={() => void rerunReport()} disabled={busyAction !== null}>
+                <RefreshCcw size={16} />
+                重新运行
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAccountModal && (
         <div className="modal-backdrop" role="presentation">
           <div className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="add-account-title">
@@ -1678,7 +1938,9 @@ export function ConsoleShell() {
                 <h3 id="add-account-title">增加账号</h3>
                 <span>选择平台和登录方式</span>
               </div>
-              <button
+              <Button
+                variant="outline"
+                size="icon"
                 className="icon-button"
                 title="关闭"
                 onClick={() => {
@@ -1687,7 +1949,7 @@ export function ConsoleShell() {
                 }}
               >
                 <XCircle size={18} />
-              </button>
+              </Button>
             </div>
             <div className="form-grid modal-form">
               <label className="field">
@@ -1757,7 +2019,8 @@ export function ConsoleShell() {
               </div>
             )}
             <div className="modal-actions">
-              <button
+              <Button
+                variant="secondary"
                 className="secondary-button"
                 onClick={() => {
                   setShowAccountModal(false);
@@ -1765,15 +2028,15 @@ export function ConsoleShell() {
                 }}
               >
                 关闭
-              </button>
-              <button
+              </Button>
+              <Button
                 className="primary-button"
                 onClick={() => void startAccountLogin()}
                 disabled={busyAction !== null || accountLoginInProgress}
               >
                 <ExternalLink size={16} />
                 打开登录页
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1795,7 +2058,9 @@ export function ConsoleShell() {
                 </span>
               </div>
               <div className="task-log-header-actions">
-                <button
+                <Button
+                  variant="outline"
+                  size="icon"
                   className="icon-button"
                   title="刷新任务日志"
                   onClick={() =>
@@ -1804,10 +2069,16 @@ export function ConsoleShell() {
                   disabled={taskLogModal.loading}
                 >
                   {taskLogModal.loading ? <Loader2 className="spin" size={18} /> : <RefreshCcw size={18} />}
-                </button>
-                <button className="icon-button" title="关闭" onClick={() => setTaskLogModal(null)}>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="icon-button"
+                  title="关闭"
+                  onClick={() => setTaskLogModal(null)}
+                >
                   <XCircle size={18} />
-                </button>
+                </Button>
               </div>
             </div>
             <div className="task-log-content">

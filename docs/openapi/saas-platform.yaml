@@ -31,7 +31,7 @@ paths:
   /health:
     get:
       tags: [System]
-      summary: Get service health and tenant context.
+      summary: Get service health and workspace context.
       operationId: getHealth
       parameters:
         - $ref: "#/components/parameters/WorkspaceId"
@@ -265,6 +265,9 @@ paths:
                   sourceScope:
                     searchRunId: search_20260522_001
                     includeForumLog: true
+                    orchestration:
+                      enabled: true
+                      engines: [query, media]
                   outputFormats: [html, md, pdf]
                   owner:
                     userId: user_demo
@@ -367,6 +370,35 @@ paths:
       responses:
         "202":
           description: Cancel accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReportTaskResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /report-tasks/{taskId}:rerun:
+    post:
+      tags: [Reports]
+      summary: Rerun selected analysis engines for an existing report task.
+      description: Re-runs only the requested Query/Media/Insight engines and reuses historical engine reports from the same task workspace for engines that are not selected.
+      operationId: rerunReportTask
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RerunReportTaskRequest"
+            examples:
+              rerunQueryOnly:
+                value:
+                  engines: [query]
+      responses:
+        "202":
+          description: Rerun accepted.
           content:
             application/json:
               schema:
@@ -647,6 +679,51 @@ paths:
                 $ref: "#/components/schemas/CrawlerDataListResponse"
         default:
           $ref: "#/components/responses/Error"
+    delete:
+      tags: [Crawlers]
+      summary: Delete a persisted crawler record.
+      operationId: deleteCrawlerDataRecord
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - name: tableName
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sourceId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: platform
+          in: query
+          schema:
+            $ref: "#/components/schemas/PlatformId"
+        - name: contentType
+          in: query
+          schema:
+            type: string
+            enum: [content, comment]
+      responses:
+        "200":
+          description: Crawler data record deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, deleted]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  deleted:
+                    type: integer
+                  sources:
+                    type: array
+                    items:
+                      type: string
+        default:
+          $ref: "#/components/responses/Error"
 
   /crawler-tasks:
     get:
@@ -924,11 +1001,12 @@ components:
     WorkspaceId:
       name: X-Workspace-Id
       in: header
-      required: true
-      description: Tenant or console scope. Report tasks create their own artifact workspace id.
+      required: false
+      description: User-level workspace scope. Defaults to `workspace_demo` until user accounts are introduced.
       schema:
         type: string
-        example: workspace_console
+        default: workspace_demo
+        example: workspace_demo
     PageToken:
       name: pageToken
       in: query
@@ -988,10 +1066,10 @@ components:
       properties:
         workspaceId:
           type: string
-          description: Resource workspace id. For report tasks this is generated per task and owns artifacts/logs.
+          description: User-level workspace id. Report artifacts are stored under `workspaces/{workspaceId}/{taskId}/`.
         tenantId:
           type: string
-          description: Optional parent tenant/console scope from `X-Workspace-Id`.
+          description: Optional parent tenant scope for future multi-tenant deployments.
 
     UserRef:
       type: object
@@ -1024,6 +1102,10 @@ components:
     ComponentId:
       type: string
       enum: [query, media, insight, forum, report, mindspider, database]
+
+    ReportEngineId:
+      type: string
+      enum: [query, media, insight]
 
     ComponentStatus:
       type: string
@@ -1412,6 +1494,7 @@ components:
           default: true
         mode:
           type: string
+          enum: [single_engine, multi_engine]
           example: multi_engine
         status:
           type: string
@@ -1420,22 +1503,28 @@ components:
           type: string
           description: Per-report workspace used for Query, Media, Insight, Forum, and Report artifacts.
         engines:
-          type: object
-          additionalProperties:
-            type: object
-            properties:
-              status:
-                type: string
-              artifactPath:
-                type: string
-              startedAt:
-                type: string
-                format: date-time
-              completedAt:
-                type: string
-                format: date-time
-              error:
-                type: string
+          description: Requested engine ids while queued, or per-engine runtime state after orchestration starts.
+          oneOf:
+            - type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/ReportEngineId"
+            - type: object
+              additionalProperties:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  artifactPath:
+                    type: string
+                  startedAt:
+                    type: string
+                    format: date-time
+                  completedAt:
+                    type: string
+                    format: date-time
+                  error:
+                    type: string
         forum:
           type: object
           properties:
@@ -1475,6 +1564,16 @@ components:
           default: [html]
         owner:
           $ref: "#/components/schemas/UserRef"
+
+    RerunReportTaskRequest:
+      type: object
+      required: [engines]
+      properties:
+        engines:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ReportEngineId"
 
     ReportTask:
       allOf:
@@ -1532,7 +1631,7 @@ components:
           type: integer
         downloadUrl:
           type: string
-          description: Browser-ready export URL. Report artifact URLs include the generated task workspace id as `workspaceId`.
+          description: Browser-ready export URL. Report artifact URLs include the user-level workspace id as `workspaceId`.
         expiresAt:
           type: string
           format: date-time
@@ -2165,6 +2264,30 @@ components:
                 type: integer
               totalComments:
                 type: integer
+              sentiment:
+                type: object
+                properties:
+                  processed:
+                    type: integer
+                  updated:
+                    type: integer
+                  failed:
+                    type: integer
+                  disabled:
+                    type: boolean
+                  error:
+                    type: string
+                  tables:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        processed:
+                          type: integer
+                        updated:
+                          type: integer
+                        failed:
+                          type: integer
 
     CrawlerTaskResponse:
       type: object

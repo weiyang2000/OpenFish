@@ -27,7 +27,7 @@ export default defineConfig({
     env: {
       NEXT_PUBLIC_USE_MOCKS: process.env.NEXT_PUBLIC_USE_MOCKS ?? "true",
       NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL ?? "",
-      NEXT_PUBLIC_WORKSPACE_ID: "workspace_e2e"
+      NEXT_PUBLIC_WORKSPACE_ID: "workspace_demo"
     }
   }
 });

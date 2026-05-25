@@ -20,6 +20,7 @@ from apps.api.schemas import (
     CrawlerStrategyInput,
     IdentityRuleInput,
     PlatformPolicyInput,
+    RerunReportTaskRequest,
     SearchRunRequest,
     SystemConfigUpdateRequest,
 )
@@ -38,6 +39,7 @@ DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1:3000",
     "http://0.0.0.0:3000",
 )
+DEFAULT_WORKSPACE_ID = "workspace_demo"
 
 
 def create_app(
@@ -48,7 +50,7 @@ def create_app(
     run_workers: bool | None = None,
 ) -> FastAPI:
     root = Path(repo_root or Path(__file__).resolve().parents[2])
-    db = Path(db_path or os.getenv("BETTAFISH_API_DB_PATH", root / "data" / "saas_api.sqlite3"))
+    db_override = db_path
     artifacts = Path(
         artifact_dir
         or os.getenv("BETTAFISH_API_ARTIFACT_DIR", root / "data" / "saas_api_artifacts")
@@ -59,7 +61,7 @@ def create_app(
         else os.getenv("BETTAFISH_API_RUN_WORKERS", "false").lower() == "true"
     )
 
-    store = Store(db)
+    store = Store(db_override) if db_override else Store()
     account_service = AccountService(store, root)
     app = FastAPI(
         title="BettaFish SaaS Platform API",
@@ -316,6 +318,20 @@ def build_router() -> APIRouter:
             "eventStreamUrl": f"/api/v1/report-tasks/{task['id']}/events",
         }
 
+    @router.post("/report-tasks/{task_id}:rerun", status_code=202)
+    def rerun_report_task(
+        task_id: str,
+        payload: RerunReportTaskRequest,
+        request: Request,
+        workspace_id: str = Depends(workspace_header),
+    ) -> dict[str, Any]:
+        task = request.app.state.task_service.rerun_report_task(workspace_id, task_id, payload.engines)
+        return {
+            "success": True,
+            "task": task,
+            "eventStreamUrl": f"/api/v1/report-tasks/{task['id']}/events",
+        }
+
     @router.get("/report-tasks/{task_id}/result")
     def get_report_result(
         task_id: str,
@@ -449,6 +465,23 @@ def build_router() -> APIRouter:
             page_size=page_size,
         )
         return {"success": True, **page}
+
+    @router.delete("/crawler-data")
+    def delete_crawler_data(
+        request: Request,
+        _: str = Depends(workspace_header),
+        table_name: str = Query(..., alias="tableName"),
+        source_id: str = Query(..., alias="sourceId"),
+        platform: str | None = None,
+        content_type: str | None = Query(None, alias="contentType"),
+    ) -> dict[str, Any]:
+        result = request.app.state.crawler_data_service.delete_record(
+            table_name=table_name,
+            source_id=source_id,
+            platform=platform,
+            content_type=content_type,
+        )
+        return {"success": True, **result}
 
     @router.get("/crawler-tasks")
     def list_crawler_tasks(
@@ -610,10 +643,8 @@ def workspace_header(
     x_workspace_id: str | None = Header(None, alias="X-Workspace-Id"),
     workspace_id: str | None = Query(None, alias="workspaceId"),
 ) -> str:
-    resolved = x_workspace_id or workspace_id
-    if not resolved:
-        raise ApiError("VALIDATION_ERROR", "X-Workspace-Id header is required", status_code=422)
-    return resolved
+    resolved = (x_workspace_id or workspace_id or DEFAULT_WORKSPACE_ID).strip()
+    return resolved or DEFAULT_WORKSPACE_ID
 
 
 def error_response(code: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -659,6 +690,3 @@ def _parse_event_id(value: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
-
-
-app = create_app()

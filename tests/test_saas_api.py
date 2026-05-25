@@ -17,7 +17,7 @@ from apps.api.services.accounts import AccountService
 from apps.api.services.tasks import TaskService
 
 
-WORKSPACE_HEADERS = {"X-Workspace-Id": "workspace_test"}
+WORKSPACE_HEADERS = {"X-Workspace-Id": "workspace_demo"}
 
 
 @pytest.fixture()
@@ -530,6 +530,69 @@ def test_crawler_data_search_reads_crawler_tables(
     assert body["records"][0]["platformId"] == "xhs"
     assert body["records"][0]["sentiment"] == "positive"
 
+    delete_response = client.delete(
+        "/api/v1/crawler-data?tableName=xhs_note&sourceId=note_001&platform=xhs&contentType=content",
+        headers=WORKSPACE_HEADERS,
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] == 1
+
+    response = client.get(
+        "/api/v1/crawler-data?platform=xhs&contentType=content&q=护理",
+        headers=WORKSPACE_HEADERS,
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"]["totalRecords"] == 0
+
+    invalid_delete = client.delete(
+        "/api/v1/crawler-data?tableName=sqlite_master&sourceId=note_001",
+        headers=WORKSPACE_HEADERS,
+    )
+    assert invalid_delete.status_code == 400
+    assert invalid_delete.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_crawler_data_does_not_read_sqlite_without_explicit_opt_in(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = client.app.state.store
+    monkeypatch.delenv("BETTAFISH_CRAWLER_SQLITE_PATH", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("DB_DIALECT", "postgresql")
+    monkeypatch.setenv("DB_HOST", "your_db_host")
+    monkeypatch.setenv("DB_USER", "your_db_user")
+    monkeypatch.setenv("DB_PASSWORD", "your_db_password")
+    monkeypatch.setenv("DB_NAME", "your_db_name")
+    store.execute(
+        """
+        CREATE TABLE xhs_note (
+            id INTEGER PRIMARY KEY,
+            note_id TEXT,
+            title TEXT,
+            desc TEXT,
+            add_ts INTEGER
+        )
+        """
+    )
+    store.execute(
+        """
+        INSERT INTO xhs_note (note_id, title, desc, add_ts)
+        VALUES (?, ?, ?, ?)
+        """,
+        ("note_sqlite_only", "SQLite 残留数据", "不应被爬取数据接口读取", 1760000100),
+    )
+
+    response = client.get(
+        "/api/v1/crawler-data?platform=xhs&contentType=content&q=SQLite",
+        headers=WORKSPACE_HEADERS,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"]["totalRecords"] == 0
+    assert body["source"] == "unavailable"
+
 
 def test_crawler_strategy_platform_policy_round_trip_and_invalid_platform(client: TestClient):
     payload = {
@@ -578,10 +641,10 @@ def test_report_task_basic_lifecycle_and_events(client: TestClient):
         },
     )
     assert auto_response.status_code == 202
-    assert auto_response.json()["task"]["templateId"] == "auto"
-    assert auto_response.json()["task"]["workspaceId"].startswith("workspace_")
-    assert auto_response.json()["task"]["workspaceId"] != WORKSPACE_HEADERS["X-Workspace-Id"]
-    assert auto_response.json()["task"]["tenantId"] == WORKSPACE_HEADERS["X-Workspace-Id"]
+    auto_task = auto_response.json()["task"]
+    assert auto_task["templateId"] == "auto"
+    assert auto_task["workspaceId"] == WORKSPACE_HEADERS["X-Workspace-Id"]
+    assert "tenantId" not in auto_task
 
     create_response = client.post(
         "/api/v1/report-tasks",
@@ -595,9 +658,14 @@ def test_report_task_basic_lifecycle_and_events(client: TestClient):
     assert create_response.status_code == 202
     task = create_response.json()["task"]
     assert task["status"] == "queued"
-    assert task["workspaceId"].startswith("workspace_")
-    assert task["workspaceId"] != WORKSPACE_HEADERS["X-Workspace-Id"]
-    assert task["tenantId"] == WORKSPACE_HEADERS["X-Workspace-Id"]
+    assert task["workspaceId"] == WORKSPACE_HEADERS["X-Workspace-Id"]
+    assert "tenantId" not in task
+    task_service: TaskService = client.app.state.task_service
+    auto_task_workspace = task_service._report_task_workspace(auto_task["workspaceId"], auto_task["id"])
+    task_workspace = task_service._report_task_workspace(task["workspaceId"], task["id"])
+    assert auto_task_workspace.parent == task_workspace.parent
+    assert auto_task_workspace.name == auto_task["id"]
+    assert task_workspace.name == task["id"]
     assert create_response.json()["eventStreamUrl"].endswith(f"{task['id']}/events")
 
     get_response = client.get(f"/api/v1/report-tasks/{task['id']}", headers=WORKSPACE_HEADERS)
@@ -787,7 +855,6 @@ def test_report_worker_uses_topic_seed_when_inputs_are_empty(
     assert orchestration_calls
     assert task_id in orchestration_calls[0]
     assert task_workspace_id in orchestration_calls[0]
-    assert WORKSPACE_HEADERS["X-Workspace-Id"] not in orchestration_calls[0]
     assert captured["config"].REPORT_ENGINE_API_KEY == "sk-test-report"
     assert captured["config"].REPORT_ENGINE_MODEL_NAME == "test-report-model"
     from ReportEngine.utils.config import settings as report_settings
@@ -990,6 +1057,119 @@ def test_report_worker_orchestrates_pre_report_engines_before_report(
     assert "workspace_ready" in stages
     assert "forum_monitor_started" in stages
     assert "forum_monitor_stopped" in stages
+
+
+def test_report_rerun_reuses_unselected_historical_engine_reports(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+
+    class FakeReportAgent:
+        def __init__(self, config: Any = None):
+            captured["report_config"] = config
+
+        def generate_report(
+            self,
+            *,
+            query: str,
+            reports: list[str],
+            forum_logs: str,
+            custom_template: str,
+            save_report: bool,
+            stream_handler: Any,
+        ) -> dict[str, Any]:
+            del query, forum_logs, custom_template, save_report, stream_handler
+            captured["reports"] = reports
+            return {"html_content": "<!doctype html><h1>重跑报告</h1>"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ReportEngine.agent",
+        types.SimpleNamespace(
+            ReportAgent=FakeReportAgent,
+            create_agent=lambda *args, **kwargs: FakeReportAgent(*args, **kwargs),
+        ),
+    )
+
+    def fake_pre_engine(
+        self: TaskService,
+        engine_id: str,
+        topic: str,
+        task_workspace: Path,
+        base_settings: Any,
+        task_id: str,
+    ) -> dict[str, Any]:
+        del self, topic, base_settings, task_id
+        artifact_path = task_workspace / engine_id / f"{engine_id}_report.md"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        report = f"{engine_id} rerun report"
+        artifact_path.write_text(report, encoding="utf-8")
+        return {
+            "engine": engine_id,
+            "status": "succeeded",
+            "report": report,
+            "artifactPath": str(artifact_path),
+            "startedAt": "2026-05-25T04:30:00Z",
+            "completedAt": "2026-05-25T04:31:00Z",
+        }
+
+    monkeypatch.setattr(TaskService, "_run_pre_report_engine", fake_pre_engine)
+    monkeypatch.setattr(
+        TaskService,
+        "_start_report_forum_monitor",
+        lambda self, workspace_id, task_id, task_workspace: types.SimpleNamespace(
+            forum_log_file=task_workspace / "forum" / "forum.log"
+        ),
+    )
+    monkeypatch.setattr(TaskService, "_stop_report_forum_monitor", lambda *args: "")
+
+    create_response = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "历史报告重跑",
+            "outputFormats": ["html"],
+        },
+    )
+    assert create_response.status_code == 202
+    task = create_response.json()["task"]
+    task_id = task["id"]
+    task_service: TaskService = client.app.state.task_service
+    task_service._complete_report_task(WORKSPACE_HEADERS["X-Workspace-Id"], task_id, task["artifacts"])
+    task_workspace = task_service._report_task_workspace(task["workspaceId"], task_id)
+    for engine_id, report in {
+        "media": "media historical report",
+        "insight": "insight historical report",
+    }.items():
+        path = task_workspace / engine_id / f"{engine_id}_report.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(report, encoding="utf-8")
+
+    rerun_response = client.post(
+        f"/api/v1/report-tasks/{task_id}:rerun",
+        headers=WORKSPACE_HEADERS,
+        json={"engines": ["query"]},
+    )
+    assert rerun_response.status_code == 202
+    assert rerun_response.json()["task"]["status"] == "queued"
+    assert rerun_response.json()["task"]["sourceScope"]["orchestration"]["engines"] == ["query"]
+
+    task_service._run_report_worker(WORKSPACE_HEADERS["X-Workspace-Id"], task_id)
+
+    completed = task_service.get_report_task(WORKSPACE_HEADERS["X-Workspace-Id"], task_id)
+    assert completed["status"] == "succeeded"
+    assert captured["reports"] == [
+        "query rerun report",
+        "media historical report",
+        "insight historical report",
+    ]
+    orchestration = completed["sourceScope"]["orchestration"]
+    assert orchestration["rerunEngines"] == ["query"]
+    assert orchestration["historyEngines"] == ["media", "insight"]
+    assert orchestration["engines"]["query"]["status"] == "succeeded"
+    assert orchestration["engines"]["media"]["status"] == "reused"
+    assert orchestration["engines"]["insight"]["status"] == "reused"
 
 
 def test_crawler_task_stop_retry_and_conflict(client: TestClient):

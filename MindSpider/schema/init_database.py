@@ -11,13 +11,10 @@ MindSpider 数据库初始化（SQLAlchemy 2.x 异步引擎）
 from __future__ import annotations
 
 import asyncio
-import os
-from typing import Optional
-from urllib.parse import quote_plus
 from loguru import logger
 
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 
 from models_sa import Base
 
@@ -29,33 +26,20 @@ from pathlib import Path
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
+repo_root = project_root.parent
 sys.path.append(str(project_root))
+sys.path.append(str(repo_root))
 
 from config import settings
-
-def _env(key: str, default: Optional[str] = None) -> Optional[str]:
-    v = os.getenv(key)
-    return v if v not in (None, "") else default
+from utils.runtime_database import load_runtime_database_config
+from MindSpider.DeepSentimentCrawling.sentiment_postprocessor import (
+    CrawlerSentimentPostProcessor,
+    SENTIMENT_TABLE_SPECS,
+)
 
 
 def _build_database_url() -> str:
-    # 优先 DATABASE_URL
-    database_url = settings.DATABASE_URL if hasattr(settings, "DATABASE_URL") else None
-    if database_url:
-        return database_url
-
-    dialect = (settings.DB_DIALECT or "mysql").lower()
-    host = settings.DB_HOST or "localhost"
-    port = str(settings.DB_PORT or ("3306" if dialect == "mysql" else "5432"))
-    user = settings.DB_USER or "root"
-    password = settings.DB_PASSWORD or ""
-    password = quote_plus(password)
-    db_name = settings.DB_NAME or "mindspider"
-
-    if dialect in ("postgresql", "postgres"):
-        return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db_name}"
-
-    return f"mysql+aiomysql://{user}:{password}@{host}:{port}/{db_name}"
+    return load_runtime_database_config(settings).async_sqlalchemy_url()
 
 
 async def _create_views_if_needed(engine_dialect: str):
@@ -106,6 +90,17 @@ async def main() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    sync_engine = create_engine(
+        load_runtime_database_config(settings).sync_sqlalchemy_url(),
+        pool_pre_ping=True,
+    )
+    try:
+        CrawlerSentimentPostProcessor(
+            database_url=load_runtime_database_config(settings).sync_sqlalchemy_url()
+        ).ensure_sentiment_columns(sync_engine, SENTIMENT_TABLE_SPECS)
+    finally:
+        sync_engine.dispose()
+
     # 保持原有视图创建和释放逻辑
     dialect_name = engine.url.get_backend_name()
     await _create_views_if_needed(dialect_name)
@@ -116,5 +111,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-

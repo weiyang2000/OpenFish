@@ -48,7 +48,7 @@ test("loads and deletes existing identity rules through real API routes", async 
     strategies: [
       {
         id: "strategy_daily",
-        workspaceId: "workspace_e2e",
+        workspaceId: "workspace_demo",
         name: "每日采集",
         runMode: "deep_sentiment",
         platformPolicies: [],
@@ -62,7 +62,7 @@ test("loads and deletes existing identity rules through real API routes", async 
     accounts: [
       {
         id: "acct_wb_ops",
-        workspaceId: "workspace_e2e",
+        workspaceId: "workspace_demo",
         platformId: "wb",
         accountId: "wb_1088",
         status: "active",
@@ -185,7 +185,7 @@ test("creates crawler tasks with explicit keywords and selected platforms", asyn
         success: true,
         task: {
           id: "crawler_new",
-          workspaceId: "workspace_e2e",
+          workspaceId: "workspace_demo",
           runMode: crawlerPayload?.runMode,
           status: "queued",
           progress: 0,
@@ -230,6 +230,92 @@ test("creates crawler tasks with explicit keywords and selected platforms", asyn
   await expect(page.getByText("爬虫任务已创建")).toBeVisible();
 });
 
+test("creates report tasks with selected orchestration engines", async ({ page }) => {
+  let reportPayload: Record<string, unknown> | undefined;
+
+  await routeJson(page, "/system/components", {
+    success: true,
+    components: [
+      { id: "query", name: "Query Engine", status: "running" },
+      { id: "media", name: "Media Engine", status: "running" },
+      { id: "insight", name: "Insight Engine", status: "running" },
+      { id: "report", name: "Report Engine", status: "running" }
+    ]
+  });
+  await routeJson(page, "/report-templates", { success: true, templates: [] });
+  await page.route(`${apiBase}/report-tasks`, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ success: true, tasks: [] })
+      });
+      return;
+    }
+
+    expect(route.request().method()).toBe("POST");
+    reportPayload = route.request().postDataJSON();
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        task: {
+          id: "report_new",
+          workspaceId: "workspace_demo",
+          topic: reportPayload?.topic,
+          status: "queued",
+          progress: 0,
+          stage: "queued",
+          templateId: reportPayload?.templateId,
+          sourceScope: reportPayload?.sourceScope,
+          artifacts: [{ format: "html", ready: false }],
+          createdAt: timestamp,
+          updatedAt: timestamp
+        }
+      })
+    });
+  });
+  await routeJson(page, "/crawler-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/crawler-strategies", { success: true, strategies: [] });
+  await routeJson(page, "/crawler-accounts", { success: true, accounts: [] });
+  await routeJson(page, "/platforms", {
+    success: true,
+    platforms: [platform("wb", "微博", { allow: 0, block: 0 })]
+  });
+  await routeJson(page, "/system/config", { success: true, fields: [] });
+  await routeJson(page, "/logs?tail=300", { success: true, lines: [] });
+  await page.route(`${apiBase}/platforms/*/identity-lists`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, rules: [] })
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "报告" }).click();
+  await page.getByPlaceholder("输入报告主题").fill("多引擎调度验证");
+  await page.getByLabel("Query Engine").uncheck();
+  await page.getByRole("button", { name: "创建报告" }).click();
+
+  expect(reportPayload).toMatchObject({
+    topic: "多引擎调度验证",
+    templateId: "auto",
+    sourceScope: {
+      orchestration: {
+        enabled: true,
+        engines: ["media", "insight"]
+      }
+    },
+    outputFormats: ["html", "pdf"]
+  });
+  await expect(page.getByText("报告任务已创建")).toBeVisible();
+  await expect(page.locator(".task-row", { hasText: "多引擎调度验证" })).toContainText(
+    "Media Engine / Insight Engine"
+  );
+});
+
 test("points report downloads at the API origin with workspace fallback", async ({ page }) => {
   await routeJson(page, "/system/components", {
     success: true,
@@ -244,7 +330,7 @@ test("points report downloads at the API origin with workspace fallback", async 
     tasks: [
       {
         id: "report_ready",
-        workspaceId: "workspace_e2e",
+        workspaceId: "workspace_demo",
         topic: "下载修复验证",
         status: "succeeded",
         progress: 100,
@@ -290,11 +376,11 @@ test("points report downloads at the API origin with workspace fallback", async 
 
   await expect(page.locator(".artifact-chip", { hasText: "html" })).toHaveAttribute(
     "href",
-    `${apiBase}/report-tasks/report_ready/exports/html?workspaceId=workspace_e2e`
+    `${apiBase}/report-tasks/report_ready/exports/html?workspaceId=workspace_demo`
   );
   await expect(page.locator(".artifact-chip", { hasText: "pdf" })).toHaveAttribute(
     "href",
-    `${apiBase}/report-tasks/report_ready/exports/pdf?workspaceId=workspace_e2e`
+    `${apiBase}/report-tasks/report_ready/exports/pdf?workspaceId=workspace_demo`
   );
 });
 

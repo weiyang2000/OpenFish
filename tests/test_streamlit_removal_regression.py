@@ -77,9 +77,9 @@ def test_deployment_defaults_launch_fastapi_without_legacy_ports():
     dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
-    assert 'CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]' in dockerfile
+    assert 'CMD ["uvicorn", "apps.api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]' in dockerfile
     assert "EXPOSE 8000" in dockerfile
-    assert "uvicorn apps.api.main:app --host 0.0.0.0 --port 8000" in compose
+    assert "uvicorn apps.api.main:create_app --factory --host 0.0.0.0 --port 8000" in compose
     assert '"8000:8000"' in compose
 
     combined = f"{dockerfile}\n{compose}"

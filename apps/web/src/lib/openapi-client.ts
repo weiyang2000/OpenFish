@@ -19,12 +19,14 @@ import type {
   CreateCrawlerTaskInput,
   CreateReportTaskInput,
   CrawlerAccountLoginSession,
+  CrawlerDataRecord,
   CrawlerDataPage,
   CrawlerTask,
   IdentityRule,
   IdentityRuleInput,
   PlatformId,
   PlatformPolicy,
+  RerunReportTaskInput,
   ReportTask,
   SystemComponent,
   TaskLogEvent,
@@ -44,6 +46,7 @@ export const OPENAPI_PATHS = {
   reportTask: (id: string) => `/report-tasks/${id}`,
   reportTaskDelete: (id: string) => `/report-tasks/${id}`,
   reportTaskCancel: (id: string) => `/report-tasks/${id}:cancel`,
+  reportTaskRerun: (id: string) => `/report-tasks/${id}:rerun`,
   reportTaskEvents: (id: string) => `/report-tasks/${id}/events`,
   reportTaskLogs: (id: string) => `/report-tasks/${id}/logs`,
   crawlerStrategies: "/crawler-strategies",
@@ -68,26 +71,9 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 const configuredWorkspaceId = process.env.NEXT_PUBLIC_WORKSPACE_ID?.trim();
 
-function createWorkspaceId(): string {
-  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const random =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID().replace(/-/g, "").slice(0, 8)
-      : Math.random().toString(16).slice(2, 10);
-  return `workspace_${timestamp}_${random}`;
-}
-
 function resolveWorkspaceId(): string {
   if (configuredWorkspaceId) return configuredWorkspaceId;
-  if (typeof window === "undefined") return WORKSPACE_ID;
-
-  const storageKey = "bettafish.workspaceId";
-  const existing = window.localStorage.getItem(storageKey);
-  if (existing) return existing;
-
-  const generated = createWorkspaceId();
-  window.localStorage.setItem(storageKey, generated);
-  return generated;
+  return WORKSPACE_ID;
 }
 
 const workspaceId = resolveWorkspaceId();
@@ -255,6 +241,7 @@ export async function createReportTask(input: CreateReportTaskInput): Promise<Re
     progress: 0,
     stage: "queued",
     templateId: input.templateId,
+    sourceScope: input.sourceScope,
     artifacts: input.outputFormats.map((format) => ({
       format,
       ready: false
@@ -282,6 +269,33 @@ export async function cancelReportTask(taskId: string): Promise<ReportTask> {
   task.progress = Math.max(task.progress, 0);
   task.updatedAt = taskTimestamp();
   addLog("report", `Report task ${task.id} cancelled`, task.id);
+  return task;
+}
+
+export async function rerunReportTask(taskId: string, input: RerunReportTaskInput): Promise<ReportTask> {
+  if (!USE_MOCKS) {
+    const response = await requestJson<{ task: ReportTask }>(OPENAPI_PATHS.reportTaskRerun(taskId), {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+    return normalizeReportTask(response.task);
+  }
+
+  const task = reportTasks.find((item) => item.id === taskId);
+  if (!task) throw new Error("Task not found");
+  task.status = "queued";
+  task.progress = 0;
+  task.stage = "queued";
+  task.sourceScope = {
+    ...(task.sourceScope ?? {}),
+    orchestration: {
+      enabled: true,
+      engines: input.engines
+    }
+  };
+  task.artifacts = task.artifacts.map((artifact) => ({ ...artifact, ready: false }));
+  task.updatedAt = taskTimestamp();
+  addLog("report", `Report task ${task.id} rerun queued`, task.id);
   return task;
 }
 
@@ -530,6 +544,36 @@ export async function listCrawlerData(params: {
       }, {})
     }
   };
+}
+
+export async function deleteCrawlerDataRecord(
+  record: Pick<CrawlerDataRecord, "tableName" | "sourceId" | "platformId" | "contentType">
+): Promise<void> {
+  if (!USE_MOCKS) {
+    const query = new URLSearchParams({
+      tableName: record.tableName,
+      sourceId: record.sourceId,
+      platform: record.platformId,
+      contentType: record.contentType
+    });
+    const response = await requestJson<{ success: boolean; deleted: number }>(
+      `${OPENAPI_PATHS.crawlerData}?${query.toString()}`,
+      {
+        method: "DELETE"
+      }
+    );
+    if (!response.success || response.deleted < 1) {
+      throw new Error("Crawler data record not deleted");
+    }
+    return;
+  }
+
+  const index = crawlerDataRecords.findIndex(
+    (item) => item.tableName === record.tableName && item.sourceId === record.sourceId
+  );
+  if (index < 0) throw new Error("Crawler data record not found");
+  crawlerDataRecords.splice(index, 1);
+  addLog("crawler", `Crawler data ${record.tableName}:${record.sourceId} deleted`);
 }
 
 export async function updatePlatformPolicy(

@@ -103,7 +103,6 @@ class TaskService:
         payload: CreateReportTaskRequest,
     ) -> dict[str, Any]:
         task_id = new_id("report")
-        task_workspace_id = new_id("workspace")
         now = utc_now()
         formats = payload.outputFormats or ["html"]
         template_id = self._normalize_report_template_id(payload.templateId)
@@ -111,7 +110,7 @@ class TaskService:
             {
                 "format": item,
                 "ready": False,
-                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{item}?workspaceId={task_workspace_id}",
+                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{item}?workspaceId={workspace_id}",
             }
             for item in formats
         ]
@@ -125,8 +124,8 @@ class TaskService:
             """,
             (
                 task_id,
-                task_workspace_id,
                 workspace_id,
+                None,
                 payload.topic,
                 "queued",
                 0,
@@ -138,6 +137,60 @@ class TaskService:
                 self._user_json(payload.owner),
                 now,
                 now,
+            ),
+        )
+        task = self.get_report_task(workspace_id, task_id)
+        self.add_event(workspace_id, task_id, "report", "status", {"task": task})
+        if self.run_workers:
+            threading.Thread(
+                target=self._run_report_worker,
+                args=(workspace_id, task_id),
+                daemon=True,
+            ).start()
+        return task
+
+    def rerun_report_task(
+        self,
+        workspace_id: str,
+        task_id: str,
+        engines: list[str],
+    ) -> dict[str, Any]:
+        task = self.get_report_task(workspace_id, task_id)
+        if task["status"] in {"queued", "pending", "running"}:
+            raise ApiError(
+                "CONFLICT",
+                "Only non-running report tasks can be rerun",
+                status_code=409,
+            )
+        engine_ids = [engine for engine in REPORT_ORCHESTRATION_ENGINES if engine in set(engines)]
+        if not engine_ids:
+            raise ApiError("VALIDATION_ERROR", "At least one report engine is required", status_code=400)
+
+        source_scope = task.get("sourceScope", {})
+        source_scope["orchestration"] = {
+            "enabled": True,
+            "engines": engine_ids,
+            "rerun": True,
+        }
+        output_formats = [item["format"] for item in task.get("artifacts", [])] or ["html"]
+        artifacts = self._pending_report_artifacts(task_id, task["workspaceId"], output_formats)
+        now = utc_now()
+        self.store.execute(
+            """
+            UPDATE report_tasks
+            SET status = 'queued', progress = 0, stage = 'queued',
+                source_scope_json = ?, output_formats_json = ?, artifacts_json = ?,
+                error_json = NULL, updated_at = ?
+            WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)
+            """,
+            (
+                dumps(source_scope),
+                dumps(output_formats),
+                dumps(artifacts),
+                now,
+                task_id,
+                workspace_id,
+                workspace_id,
             ),
         )
         task = self.get_report_task(workspace_id, task_id)
@@ -256,6 +309,17 @@ class TaskService:
         if workspace_id:
             return self._report_task_workspace(workspace_id, task_id) / "report" / "exports" / f"{task_id}.{suffix}"
         return self.artifact_dir / f"{task_id}.{suffix}"
+
+    @staticmethod
+    def _pending_report_artifacts(task_id: str, workspace_id: str, formats: list[str]) -> list[dict[str, Any]]:
+        return [
+            {
+                "format": item,
+                "ready": False,
+                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{item}?workspaceId={workspace_id}",
+            }
+            for item in formats
+        ]
 
     def _delete_report_artifacts(self, task_id: str, workspace_id: str | None = None) -> None:
         for report_format in REPORT_FORMATS:
@@ -443,27 +507,28 @@ class TaskService:
             filters.append("status = ?")
             params.append(status)
         if platform:
-            filters.append(
+            rows = self.store.query_all(
                 """
-                EXISTS (
-                    SELECT 1
-                    FROM json_each(crawler_tasks.platforms_json)
-                    WHERE json_each.value = ?
-                )
-                """
+                SELECT *
+                FROM crawler_tasks
+                WHERE """ + " AND ".join(filters) + """
+                ORDER BY created_at DESC
+                """,
+                params,
             )
-            params.append(platform)
-        params.append(page_size)
-        rows = self.store.query_all(
-            """
-            SELECT *
-            FROM crawler_tasks
-            WHERE """ + " AND ".join(filters) + """
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            params,
-        )
+            rows = [row for row in rows if platform in loads(row["platforms_json"], [])][:page_size]
+        else:
+            params.append(page_size)
+            rows = self.store.query_all(
+                """
+                SELECT *
+                FROM crawler_tasks
+                WHERE """ + " AND ".join(filters) + """
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            )
         return [self._crawler_row(row) for row in rows]
 
     def get_crawler_task(self, workspace_id: str, task_id: str) -> dict[str, Any]:
@@ -688,12 +753,15 @@ class TaskService:
         task_id = task["id"]
         task_workspace.mkdir(parents=True, exist_ok=True)
         engine_ids = self._report_orchestration_engines(task.get("sourceScope", {}))
+        historical_results = self._load_task_historical_engine_reports(task_workspace, set(engine_ids))
         started_at = utc_now()
         orchestration_meta: dict[str, Any] = {
             "enabled": True,
-            "mode": "multi_engine",
+            "mode": "single_engine" if len(engine_ids) == 1 else "multi_engine",
             "status": "running",
             "workspacePath": str(task_workspace),
+            "rerunEngines": list(engine_ids),
+            "historyEngines": list(historical_results),
             "engines": {
                 engine_id: {
                     "status": "queued",
@@ -707,6 +775,12 @@ class TaskService:
             },
             "startedAt": started_at,
         }
+        for engine_id, result in historical_results.items():
+            orchestration_meta["engines"][engine_id] = {
+                "status": "reused",
+                "artifactPath": result["artifactPath"],
+                "completedAt": started_at,
+            }
         self._update_report_orchestration(workspace_id, task_id, orchestration_meta)
         self._mark_report_running(workspace_id, task_id, 15, "orchestrating")
         forum_monitor = self._start_report_forum_monitor(workspace_id, task_id, task_workspace)
@@ -720,9 +794,25 @@ class TaskService:
                     "stage": "workspace_ready",
                     "workspacePath": str(task_workspace),
                     "engines": list(engine_ids),
+                    "historyEngines": list(historical_results),
                 }
             },
         )
+        for engine_id, result in historical_results.items():
+            self.add_event(
+                workspace_id,
+                task_id,
+                "report",
+                "orchestration",
+                {
+                    "payload": {
+                        "stage": f"{engine_id}_historical_reused",
+                        "engine": engine_id,
+                        "status": "reused",
+                        "artifactPath": result["artifactPath"],
+                    }
+                },
+            )
 
         engine_results: dict[str, dict[str, Any]] = {}
         forum_logs = ""
@@ -804,12 +894,33 @@ class TaskService:
         self._update_report_orchestration(workspace_id, task_id, orchestration_meta)
         self._mark_report_running(workspace_id, task_id, 75, "data_loaded")
 
+        combined_results = {**historical_results, **engine_results}
         reports = [
-            engine_results[engine_id]["report"]
-            for engine_id in engine_ids
-            if engine_results.get(engine_id, {}).get("report")
+            combined_results[engine_id]["report"]
+            for engine_id in REPORT_ORCHESTRATION_ENGINES
+            if combined_results.get(engine_id, {}).get("report")
         ]
         return reports, forum_logs
+
+    @staticmethod
+    def _load_task_historical_engine_reports(
+        task_workspace: Path,
+        rerun_engine_ids: set[str],
+    ) -> dict[str, dict[str, Any]]:
+        results: dict[str, dict[str, Any]] = {}
+        for engine_id in REPORT_ORCHESTRATION_ENGINES:
+            if engine_id in rerun_engine_ids:
+                continue
+            artifact_path = task_workspace / engine_id / f"{engine_id}_report.md"
+            if not artifact_path.exists() or not artifact_path.is_file():
+                continue
+            results[engine_id] = {
+                "engine": engine_id,
+                "status": "reused",
+                "report": artifact_path.read_text(encoding="utf-8", errors="replace"),
+                "artifactPath": str(artifact_path),
+            }
+        return results
 
     def _run_pre_report_engine(
         self,
@@ -844,6 +955,9 @@ class TaskService:
                     else:
                         agent = DeepSearchAgent(engine_config)
                 elif engine_id == "insight":
+                    from utils.runtime_database import ensure_crawler_database_schema
+
+                    ensure_crawler_database_schema(self.repo_root, engine_config)
                     from InsightEngine.agent import DeepSearchAgent
 
                     agent = DeepSearchAgent(engine_config)
@@ -1059,12 +1173,12 @@ class TaskService:
             ["html"],
         )
         document_ir = self._load_document_ir(result.get("ir_filepath"))
-        task_workspace_id = task["workspaceId"]
-        export_dir = self._report_task_workspace(task_workspace_id, task_id) / "report" / "exports"
+        artifact_workspace_id = task["workspaceId"]
+        export_dir = self._report_task_workspace(artifact_workspace_id, task_id) / "report" / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         artifacts = []
         for report_format in formats:
-            path = self.artifact_path(task_id, report_format, task_workspace_id)
+            path = self.artifact_path(task_id, report_format, artifact_workspace_id)
             if report_format == "html":
                 html_path = result.get("report_filepath")
                 if html_path and Path(html_path).exists():
@@ -1102,7 +1216,7 @@ class TaskService:
                     "ready": True,
                     "filename": f"{safe_topic}.{report_format}",
                     "sizeBytes": path.stat().st_size,
-                    "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{report_format}?workspaceId={task_workspace_id}",
+                    "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{report_format}?workspaceId={artifact_workspace_id}",
                 }
             )
         return artifacts
@@ -1292,6 +1406,7 @@ class TaskService:
                 "failedKeywords": summary.get("failed_keywords", 0),
                 "totalNotes": summary.get("total_notes", 0),
                 "totalComments": summary.get("total_comments", 0),
+                "sentiment": summary.get("sentiment", {}),
             }
         return {
             "totalKeywords": result.get("total_keywords", 0),

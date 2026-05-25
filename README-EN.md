@@ -384,7 +384,7 @@ DB_NAME=your_db_name
 DB_CHARSET=utf8mb4
 # Database type: postgresql or mysql
 DB_DIALECT=postgresql
-# The SaaS API initializes task/config storage on startup; initialize crawler databases through the MindSpider docs
+# SaaS metadata, crawler data, and Insight queries share this database; required tables are initialized on startup/task runs
 
 # ====================== LLM Configuration ======================
 # You can switch each Engine's LLM provider as long as it follows the OpenAI-compatible request format
@@ -417,19 +417,22 @@ uv version startup command:
 .venv\Scripts\activate
 
 # Or start the ASGI service directly
-uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn apps.api.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
 ```
 
-The local API base URL is `http://localhost:8000/api/v1`. Requests must include
-`X-Workspace-Id`, for example:
+The local API base URL is `http://localhost:8000/api/v1`. Until the user system
+is introduced, the user-level workspace defaults to `workspace_demo`. Requests
+without `X-Workspace-Id` use that default; you can also pass it explicitly:
 
 ```bash
-curl -H "X-Workspace-Id: workspace_console" \
+curl -H "X-Workspace-Id: workspace_demo" \
   http://localhost:8000/api/v1/health
 ```
 
-Report tasks generate a dedicated artifact workspace when they are created;
-ReportEngine logs and export files are written under that task directory.
+Report task artifacts are separated by user-level workspace and task-level
+task id: `data/saas_api_artifacts/workspaces/workspace_demo/{task_id}/`.
+Multiple tasks from the same user share the same workspace and use different
+task_id directories.
 
 Docker Compose enables real task workers by default: report tasks call
 ReportEngine, and crawler tasks call MindSpider/MediaCrawler. Configure LLM,

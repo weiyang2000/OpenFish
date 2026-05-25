@@ -10,7 +10,7 @@
 """
 
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import Integer, String, BigInteger, Text, ForeignKey
+from sqlalchemy import Float, Integer, String, BigInteger, Text, ForeignKey
 
 # 使用 models_sa 中的 Base，确保所有表在同一个 metadata 中，外键引用可以正常工作
 from models_sa import Base
@@ -41,6 +41,9 @@ class BilibiliVideo(Base):
     source_keyword: Mapped[str | None] = mapped_column(Text, default='', nullable=True)
     topic_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("daily_topics.topic_id", ondelete="SET NULL"), nullable=True)
     crawling_task_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("crawling_tasks.task_id", ondelete="SET NULL"), nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class BilibiliVideoComment(Base):
     __tablename__ = "bilibili_video_comment"
@@ -59,6 +62,9 @@ class BilibiliVideoComment(Base):
     sub_comment_count: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_comment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     like_count: Mapped[str | None] = mapped_column(Text, default='0', nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class BilibiliUpInfo(Base):
@@ -138,6 +144,9 @@ class DouyinAweme(Base):
     source_keyword: Mapped[str | None] = mapped_column(Text, default='', nullable=True)
     topic_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("daily_topics.topic_id", ondelete="SET NULL"), nullable=True)
     crawling_task_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("crawling_tasks.task_id", ondelete="SET NULL"), nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class DouyinAwemeComment(Base):
     __tablename__ = "douyin_aweme_comment"
@@ -160,6 +169,9 @@ class DouyinAwemeComment(Base):
     parent_comment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     like_count: Mapped[str | None] = mapped_column(Text, default='0', nullable=True)
     pictures: Mapped[str | None] = mapped_column(Text, default='', nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class DyCreator(Base):
@@ -200,6 +212,9 @@ class KuaishouVideo(Base):
     source_keyword: Mapped[str | None] = mapped_column(Text, default='', nullable=True)
     topic_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("daily_topics.topic_id", ondelete="SET NULL"), nullable=True)
     crawling_task_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("crawling_tasks.task_id", ondelete="SET NULL"), nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class KuaishouVideoComment(Base):
     __tablename__ = "kuaishou_video_comment"
@@ -214,6 +229,9 @@ class KuaishouVideoComment(Base):
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     create_time: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     sub_comment_count: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class WeiboNote(Base):
     __tablename__ = "weibo_note"
@@ -237,6 +255,9 @@ class WeiboNote(Base):
     source_keyword: Mapped[str | None] = mapped_column(Text, default='', nullable=True)
     topic_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("daily_topics.topic_id", ondelete="SET NULL"), nullable=True)
     crawling_task_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("crawling_tasks.task_id", ondelete="SET NULL"), nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class WeiboNoteComment(Base):
     __tablename__ = "weibo_note_comment"
@@ -257,6 +278,9 @@ class WeiboNoteComment(Base):
     comment_like_count: Mapped[str | None] = mapped_column(Text, nullable=True)
     sub_comment_count: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_comment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class WeiboCreator(Base):
@@ -319,6 +343,9 @@ class XhsNote(Base):
     xsec_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     topic_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("daily_topics.topic_id", ondelete="SET NULL"), nullable=True)
     crawling_task_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("crawling_tasks.task_id", ondelete="SET NULL"), nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class XhsNoteComment(Base):
@@ -338,6 +365,9 @@ class XhsNoteComment(Base):
     pictures: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_comment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     like_count: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class TiebaNote(Base):
     __tablename__ = "tieba_note"
@@ -361,6 +391,9 @@ class TiebaNote(Base):
     source_keyword: Mapped[str | None] = mapped_column(Text, default='', nullable=True)
     topic_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("daily_topics.topic_id", ondelete="SET NULL"), nullable=True)
     crawling_task_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("crawling_tasks.task_id", ondelete="SET NULL"), nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class TiebaComment(Base):
     __tablename__ = "tieba_comment"
@@ -381,6 +414,9 @@ class TiebaComment(Base):
     note_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     add_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_modify_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class TiebaCreator(Base):
@@ -423,6 +459,9 @@ class ZhihuContent(Base):
     last_modify_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     topic_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("daily_topics.topic_id", ondelete="SET NULL"), nullable=True)
     crawling_task_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("crawling_tasks.task_id", ondelete="SET NULL"), nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 class ZhihuComment(Base):
     __tablename__ = "zhihu_comment"
@@ -443,6 +482,9 @@ class ZhihuComment(Base):
     user_avatar: Mapped[str | None] = mapped_column(Text, nullable=True)
     add_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_modify_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sentiment_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment_analyzed_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class ZhihuCreator(Base):

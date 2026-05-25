@@ -14,13 +14,6 @@ from .keyword_optimizer import (
     KeywordOptimizationResponse,
     keyword_optimizer
 )
-from .sentiment_analyzer import (
-    WeiboMultilingualSentimentAnalyzer,
-    SentimentResult,
-    BatchSentimentResult,
-    multilingual_sentiment_analyzer,
-    analyze_sentiment
-)
 
 __all__ = [
     "MediaCrawlerDB",
@@ -30,9 +23,4 @@ __all__ = [
     "KeywordOptimizer",
     "KeywordOptimizationResponse",
     "keyword_optimizer",
-    "WeiboMultilingualSentimentAnalyzer",
-    "SentimentResult",
-    "BatchSentimentResult",
-    "multilingual_sentiment_analyzer",
-    "analyze_sentiment"
 ]

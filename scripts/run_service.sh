@@ -20,6 +20,7 @@ Environment overrides:
   NEXT_PUBLIC_WORKSPACE_ID Frontend tenant scope; generated in browser when empty
   NEXT_PUBLIC_USE_MOCKS    Frontend mock mode, default false
   BETTAFISH_API_RUN_WORKERS Enable real task workers, default true
+  DATABASE_URL/DB_*        Unified database for SaaS metadata, crawler data, and Insight queries
   BETTAFISH_VENV_DIR        Python venv path, default .venv
   PYTHON_VERSION            Python version for uv venv, default 3.11
   PYPI_INDEX_URL            PyPI mirror for non-CUDA dependencies, default Tsinghua mirror
@@ -50,7 +51,6 @@ fi
 
 export BETTAFISH_API_HOST="${BETTAFISH_API_HOST:-0.0.0.0}"
 export BETTAFISH_API_PORT="${BETTAFISH_API_PORT:-8000}"
-export BETTAFISH_API_DB_PATH="${BETTAFISH_API_DB_PATH:-$ROOT_DIR/data/saas_api.sqlite3}"
 export BETTAFISH_API_ARTIFACT_DIR="${BETTAFISH_API_ARTIFACT_DIR:-$ROOT_DIR/data/saas_api_artifacts}"
 export BETTAFISH_API_RUN_WORKERS="${BETTAFISH_API_RUN_WORKERS:-true}"
 export BETTAFISH_API_CRAWLER_ADAPTER="${BETTAFISH_API_CRAWLER_ADAPTER:-real}"
@@ -223,7 +223,7 @@ monitor_processes() {
 }
 
 start_api() {
-  mkdir -p "$(dirname "$BETTAFISH_API_DB_PATH")" "$BETTAFISH_API_ARTIFACT_DIR" "$ROOT_DIR/logs"
+  mkdir -p "$BETTAFISH_API_ARTIFACT_DIR" "$ROOT_DIR/logs"
   ensure_python_env
   ensure_api_deps || {
     echo "Missing API dependencies. Try: SYNC_PYTHON_DEPS=1 scripts/run_service.sh api" >&2

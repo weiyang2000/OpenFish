@@ -17,12 +17,16 @@ from loguru import logger
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent
+repo_root = project_root.parent
 sys.path.append(str(project_root))
+sys.path.append(str(repo_root))
 
 try:
     import config
 except ImportError:
     raise ImportError("无法导入config.py配置文件")
+
+from utils.runtime_database import ensure_crawler_database_schema, load_runtime_database_config
 
 
 PLATFORM_RECORD_TABLES = {
@@ -56,6 +60,7 @@ class PlatformCrawler:
     def __init__(self, log_callback: Optional[CrawlerLogCallback] = None):
         """初始化平台爬虫管理器"""
         self.mediacrawler_path = Path(__file__).parent / "MediaCrawler"
+        self.repo_root = Path(__file__).resolve().parents[2]
         self.supported_platforms = ['xhs', 'dy', 'ks', 'bili', 'wb', 'tieba', 'zhihu']
         self.crawl_stats = {}
         self._schema_initialized: set[str] = set()
@@ -72,113 +77,18 @@ class PlatformCrawler:
         logger.info(f"初始化平台爬虫管理器，MediaCrawler路径: {self.mediacrawler_path}")
     
     def configure_mediacrawler_db(self):
-        """配置MediaCrawler使用我们的数据库（MySQL或PostgreSQL）"""
+        """配置MediaCrawler使用根目录 .env 中的数据库配置。"""
         try:
-            # 判断数据库类型
-            db_dialect = (config.settings.DB_DIALECT or "mysql").lower()
-            is_postgresql = db_dialect in ("postgresql", "postgres")
-            
-            # 修改MediaCrawler的数据库配置
-            db_config_path = self.mediacrawler_path / "config" / "db_config.py"
-            
-            # 读取原始配置
-            with open(db_config_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # PostgreSQL配置值：如果使用PostgreSQL则使用MindSpider配置，否则使用默认值或环境变量
-            pg_password = config.settings.DB_PASSWORD if is_postgresql else "bettafish"
-            pg_user = config.settings.DB_USER if is_postgresql else "bettafish"
-            pg_host = config.settings.DB_HOST if is_postgresql else "127.0.0.1"
-            pg_port = config.settings.DB_PORT if is_postgresql else 5444
-            pg_db_name = config.settings.DB_NAME if is_postgresql else "bettafish"
-            
-            # 替换数据库配置 - 使用MindSpider的数据库配置
-            new_config = f'''# 声明：本代码仅供学习和研究目的使用。使用者应遵守以下原则：  
-# 1. 不得用于任何商业用途。  
-# 2. 使用时应遵守目标平台的使用条款和robots.txt规则。  
-# 3. 不得进行大规模爬取或对平台造成运营干扰。  
-# 4. 应合理控制请求频率，避免给目标平台带来不必要的负担。   
-# 5. 不得用于任何非法或不当的用途。
-#   
-# 详细许可条款请参阅项目根目录下的LICENSE文件。  
-# 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。  
-
-
-import os
-
-# mysql config - 使用MindSpider的数据库配置
-MYSQL_DB_PWD = "{config.settings.DB_PASSWORD}"
-MYSQL_DB_USER = "{config.settings.DB_USER}"
-MYSQL_DB_HOST = "{config.settings.DB_HOST}"
-MYSQL_DB_PORT = {config.settings.DB_PORT}
-MYSQL_DB_NAME = "{config.settings.DB_NAME}"
-
-mysql_db_config = {{
-    "user": MYSQL_DB_USER,
-    "password": MYSQL_DB_PWD,
-    "host": MYSQL_DB_HOST,
-    "port": MYSQL_DB_PORT,
-    "db_name": MYSQL_DB_NAME,
-}}
-
-
-# redis config
-REDIS_DB_HOST = "127.0.0.1"  # your redis host
-REDIS_DB_PWD = os.getenv("REDIS_DB_PWD", "123456")  # your redis password
-REDIS_DB_PORT = os.getenv("REDIS_DB_PORT", 6379)  # your redis port
-REDIS_DB_NUM = os.getenv("REDIS_DB_NUM", 0)  # your redis db num
-
-# cache type
-CACHE_TYPE_REDIS = "redis"
-CACHE_TYPE_MEMORY = "memory"
-
-# sqlite config
-SQLITE_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "database", "sqlite_tables.db")
-
-sqlite_db_config = {{
-    "db_path": SQLITE_DB_PATH
-}}
-
-# mongodb config
-MONGODB_HOST = os.getenv("MONGODB_HOST", "localhost")
-MONGODB_PORT = os.getenv("MONGODB_PORT", 27017)
-MONGODB_USER = os.getenv("MONGODB_USER", "")
-MONGODB_PWD = os.getenv("MONGODB_PWD", "")
-MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "media_crawler")
-
-mongodb_config = {{
-    "host": MONGODB_HOST,
-    "port": int(MONGODB_PORT),
-    "user": MONGODB_USER,
-    "password": MONGODB_PWD,
-    "db_name": MONGODB_DB_NAME,
-}}
-
-# postgres config - 使用MindSpider的数据库配置（如果DB_DIALECT是postgresql）或环境变量
-POSTGRES_DB_PWD = os.getenv("POSTGRES_DB_PWD", "{pg_password}")
-POSTGRES_DB_USER = os.getenv("POSTGRES_DB_USER", "{pg_user}")
-POSTGRES_DB_HOST = os.getenv("POSTGRES_DB_HOST", "{pg_host}")
-POSTGRES_DB_PORT = os.getenv("POSTGRES_DB_PORT", "{pg_port}")
-POSTGRES_DB_NAME = os.getenv("POSTGRES_DB_NAME", "{pg_db_name}")
-
-postgres_db_config = {{
-    "user": POSTGRES_DB_USER,
-    "password": POSTGRES_DB_PWD,
-    "host": POSTGRES_DB_HOST,
-    "port": POSTGRES_DB_PORT,
-    "db_name": POSTGRES_DB_NAME,
-}}
-
-'''
-            
-            # 写入新配置
-            with open(db_config_path, 'w', encoding='utf-8') as f:
-                f.write(new_config)
-            
-            db_type = "PostgreSQL" if is_postgresql else "MySQL"
-            logger.info(f"已配置MediaCrawler使用MindSpider {db_type}数据库")
+            if hasattr(config, "reload_settings"):
+                config.reload_settings()
+            runtime_db = load_runtime_database_config(config.settings)
+            runtime_db.require_configured()
+            runtime_db.apply_to_environment()
+            logger.info(
+                "已配置MediaCrawler使用统一数据库配置: "
+                f"{runtime_db.dialect}://{runtime_db.host}:{runtime_db.port}/{runtime_db.name}"
+            )
             return True
-            
         except Exception as e:
             logger.exception(f"配置MediaCrawler数据库失败: {e}")
             return False
@@ -198,10 +108,9 @@ postgres_db_config = {{
             是否配置成功
         """
         try:
-            # 判断数据库类型，确定 SAVE_DATA_OPTION
-            db_dialect = (config.settings.DB_DIALECT or "mysql").lower()
-            is_postgresql = db_dialect in ("postgresql", "postgres")
-            save_data_option = "postgres" if is_postgresql else "db"
+            if hasattr(config, "reload_settings"):
+                config.reload_settings()
+            save_data_option = load_runtime_database_config(config.settings).save_data_option
 
             base_config_path = self.mediacrawler_path / "config" / "base_config.py"
             
@@ -298,10 +207,7 @@ postgres_db_config = {{
             if not self.create_base_config(platform, keywords, "search", max_notes):
                 return {"success": False, "error": "基础配置创建失败"}
             
-            # 判断数据库类型，确定 save_data_option
-            db_dialect = (config.settings.DB_DIALECT or "mysql").lower()
-            is_postgresql = db_dialect in ("postgresql", "postgres")
-            save_data_option = "postgres" if is_postgresql else "db"
+            save_data_option = load_runtime_database_config(config.settings).save_data_option
             if not self._ensure_mediacrawler_schema(save_data_option):
                 return {"success": False, "error": f"{save_data_option} 数据库表初始化失败", "platform": platform}
 
@@ -359,6 +265,8 @@ postgres_db_config = {{
                 crawl_stats["error"] = detected_error
             elif result.returncode != 0:
                 crawl_stats["error"] = f"MediaCrawler subprocess exited with return code {result.returncode}"
+            elif success:
+                crawl_stats["sentiment"] = self._postprocess_sentiment(platform)
             
             # 保存统计信息
             self.crawl_stats[platform] = crawl_stats
@@ -383,6 +291,24 @@ postgres_db_config = {{
             logger.exception(f"❌ {platform} 爬取异常: {e}")
             return {"success": False, "error": str(e), "platform": platform}
 
+    def _postprocess_sentiment(self, platform: str) -> Dict:
+        logger.info(f"开始执行 {platform} 爬虫情绪后处理")
+        from MindSpider.DeepSentimentCrawling.sentiment_postprocessor import (
+            run_crawler_sentiment_postprocessing,
+        )
+
+        stats = run_crawler_sentiment_postprocessing(platform)
+        if stats.get("error"):
+            logger.warning(f"{platform} 情绪后处理未完成: {stats['error']}")
+        elif stats.get("disabled"):
+            logger.info(f"{platform} 情绪后处理已禁用")
+        else:
+            logger.info(
+                f"{platform} 情绪后处理完成，处理: {stats.get('processed', 0)}，"
+                f"写回: {stats.get('updated', 0)}，失败: {stats.get('failed', 0)}"
+            )
+        return stats
+
     def _ensure_mediacrawler_schema(self, save_data_option: str) -> bool:
         init_db_type = {
             "postgres": "postgres",
@@ -392,16 +318,14 @@ postgres_db_config = {{
         if not init_db_type or init_db_type in self._schema_initialized:
             return True
 
-        cmd = [sys.executable, "main.py", "--init_db", init_db_type]
-        logger.info(f"初始化 MediaCrawler 数据库表: {' '.join(cmd)}")
         try:
-            result = self._run_media_crawler_command(cmd, timeout=120)
+            logger.info(f"初始化统一爬虫数据库表: {init_db_type}")
+            ensure_crawler_database_schema(self.repo_root, config.settings, timeout_seconds=180)
         except subprocess.TimeoutExpired:
             logger.exception(f"❌ 初始化 MediaCrawler {init_db_type} 数据库表超时")
             return False
-
-        if result.returncode != 0:
-            logger.error(f"❌ 初始化 MediaCrawler {init_db_type} 数据库表失败，返回码: {result.returncode}")
+        except Exception as exc:
+            logger.exception(f"❌ 初始化 MediaCrawler {init_db_type} 数据库表失败: {exc}")
             return False
 
         self._schema_initialized.add(init_db_type)
@@ -538,7 +462,7 @@ postgres_db_config = {{
         if not tables:
             return {"notes": 0, "comments": 0}
 
-        db_dialect = (config.settings.DB_DIALECT or "mysql").lower()
+        db_dialect = load_runtime_database_config(config.settings).dialect
         try:
             if db_dialect in ("postgresql", "postgres"):
                 return self._count_postgres_records(*tables)
@@ -554,12 +478,13 @@ postgres_db_config = {{
     def _count_postgres_records(note_table: str, comment_table: str) -> Dict[str, int]:
         import psycopg
 
+        runtime_db = load_runtime_database_config(config.settings)
         with psycopg.connect(
-            host=config.settings.DB_HOST,
-            port=config.settings.DB_PORT,
-            dbname=config.settings.DB_NAME,
-            user=config.settings.DB_USER,
-            password=config.settings.DB_PASSWORD,
+            host=runtime_db.host,
+            port=runtime_db.port,
+            dbname=runtime_db.name,
+            user=runtime_db.user,
+            password=runtime_db.password,
         ) as conn:
             return {
                 "notes": PlatformCrawler._count_table_rows(conn, note_table),
@@ -570,12 +495,13 @@ postgres_db_config = {{
     def _count_mysql_records(note_table: str, comment_table: str) -> Dict[str, int]:
         import pymysql
 
+        runtime_db = load_runtime_database_config(config.settings)
         with pymysql.connect(
-            host=config.settings.DB_HOST,
-            port=int(config.settings.DB_PORT),
-            database=config.settings.DB_NAME,
-            user=config.settings.DB_USER,
-            password=config.settings.DB_PASSWORD,
+            host=runtime_db.host,
+            port=int(runtime_db.port),
+            database=runtime_db.name,
+            user=runtime_db.user,
+            password=runtime_db.password,
         ) as conn:
             return {
                 "notes": PlatformCrawler._count_table_rows(conn, note_table),
@@ -678,6 +604,7 @@ postgres_db_config = {{
                     total_stats["total_comments"] += comments_count
                     total_stats["platform_summary"][platform]["total_notes"] = notes_count
                     total_stats["platform_summary"][platform]["total_comments"] = comments_count
+                    total_stats["platform_summary"][platform]["sentiment"] = result.get("sentiment", {})
                     
                     # 为每个关键词记录结果
                     for keyword in keywords:

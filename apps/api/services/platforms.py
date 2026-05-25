@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 from apps.api.schemas import ApiError, IdentityRuleInput, PLATFORM_IDS, PlatformPolicyInput
@@ -236,7 +235,9 @@ class PlatformService:
                     else None,
                 ),
             )
-        except sqlite3.IntegrityError as exc:
+        except Exception as exc:
+            if not self.store.is_integrity_error(exc):
+                raise
             raise ApiError(
                 "CONFLICT",
                 "User ID already exists in this identity list",

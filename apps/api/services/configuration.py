@@ -19,6 +19,7 @@ CONFIG_KEYS = [
     "DB_PASSWORD",
     "DB_NAME",
     "DB_CHARSET",
+    "DATABASE_URL",
     "INSIGHT_ENGINE_API_KEY",
     "INSIGHT_ENGINE_BASE_URL",
     "INSIGHT_ENGINE_MODEL_NAME",
@@ -63,13 +64,13 @@ SEARCH_TOOL_OPTIONS = ["AnspireAPI", "BochaAPI"]
 
 
 def is_sensitive_key(key: str) -> bool:
-    return key.upper().endswith(("API_KEY", "PASSWORD", "SECRET", "TOKEN"))
+    return key == "DATABASE_URL" or key.upper().endswith(("API_KEY", "PASSWORD", "SECRET", "TOKEN"))
 
 
 def config_group(key: str) -> str:
     if key.startswith(("HOST", "PORT")):
         return "server"
-    if key.startswith("DB_"):
+    if key == "DATABASE_URL" or key.startswith("DB_"):
         return "database"
     if key.startswith(("MAX_", "DEFAULT_")) or key in {"SEARCH_TIMEOUT", "SAVE_INTERMEDIATE_STATES"}:
         return "engine"

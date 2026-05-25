@@ -30,6 +30,8 @@ export type PlatformId = "xhs" | "dy" | "ks" | "bili" | "wb" | "tieba" | "zhihu"
 
 export type ReportFormat = "html" | "json" | "md" | "pdf";
 
+export type ReportEngineId = "query" | "media" | "insight";
+
 export type RunMode = "topic_extraction" | "deep_sentiment" | "full_workflow";
 
 export type IdentityListType = "allow" | "block";
@@ -120,7 +122,11 @@ export interface ReportTask {
       mode?: string;
       status?: string;
       workspacePath?: string;
-      engines?: Record<string, Record<string, string | undefined>>;
+      rerunEngines?: ReportEngineId[];
+      historyEngines?: ReportEngineId[];
+      engines?:
+        | ReportEngineId[]
+        | Partial<Record<ReportEngineId, Record<string, string | undefined>>>;
       forum?: Record<string, string | undefined>;
       startedAt?: string;
       completedAt?: string;
@@ -141,6 +147,25 @@ export interface CrawlerStats {
   failedTasks: number;
   totalNotes: number;
   totalComments: number;
+  platformSummary?: Partial<
+    Record<
+      PlatformId,
+      {
+        successfulKeywords: number;
+        failedKeywords: number;
+        totalNotes: number;
+        totalComments: number;
+        sentiment?: {
+          processed?: number;
+          updated?: number;
+          failed?: number;
+          disabled?: boolean;
+          error?: string;
+          tables?: Record<string, { processed: number; updated: number; failed: number }>;
+        };
+      }
+    >
+  >;
 }
 
 export interface CrawlerTask {
@@ -371,8 +396,18 @@ export interface ConsoleSnapshot {
 export interface CreateReportTaskInput {
   topic: string;
   templateId?: string;
+  sourceScope?: {
+    orchestration?: {
+      enabled?: boolean;
+      engines: ReportEngineId[];
+    };
+  };
   outputFormats: ReportFormat[];
   owner: UserRef;
+}
+
+export interface RerunReportTaskInput {
+  engines: ReportEngineId[];
 }
 
 export interface CreateCrawlerTaskInput {

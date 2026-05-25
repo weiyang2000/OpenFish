@@ -16,7 +16,7 @@
 # 详细许可条款请参阅项目根目录下的LICENSE文件。
 # 使用本代码即表示您同意遵守上述原则和LICENSE中的所有条款。
 
-from sqlalchemy import create_engine, Column, Integer, Text, String, BigInteger
+from sqlalchemy import create_engine, Column, Float, Integer, Text, String, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -46,6 +46,9 @@ class BilibiliVideo(Base):
     video_comment = Column(Text)
     video_cover_url = Column(Text)
     source_keyword = Column(Text, default='')
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class BilibiliVideoComment(Base):
     __tablename__ = 'bilibili_video_comment'
@@ -64,6 +67,9 @@ class BilibiliVideoComment(Base):
     sub_comment_count = Column(Text)
     parent_comment_id = Column(String(255))
     like_count = Column(Text, default='0')
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class BilibiliUpInfo(Base):
     __tablename__ = 'bilibili_up_info'
@@ -137,6 +143,9 @@ class DouyinAweme(Base):
     music_download_url = Column(Text)
     note_download_url = Column(Text)
     source_keyword = Column(Text, default='')
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class DouyinAwemeComment(Base):
     __tablename__ = 'douyin_aweme_comment'
@@ -159,6 +168,9 @@ class DouyinAwemeComment(Base):
     parent_comment_id = Column(String(255))
     like_count = Column(Text, default='0')
     pictures = Column(Text, default='')
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class DyCreator(Base):
     __tablename__ = 'dy_creator'
@@ -195,6 +207,9 @@ class KuaishouVideo(Base):
     video_cover_url = Column(Text)
     video_play_url = Column(Text)
     source_keyword = Column(Text, default='')
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class KuaishouVideoComment(Base):
     __tablename__ = 'kuaishou_video_comment'
@@ -209,6 +224,9 @@ class KuaishouVideoComment(Base):
     content = Column(Text)
     create_time = Column(BigInteger)
     sub_comment_count = Column(Text)
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class WeiboNote(Base):
     __tablename__ = 'weibo_note'
@@ -230,6 +248,9 @@ class WeiboNote(Base):
     shared_count = Column(Text)
     note_url = Column(Text)
     source_keyword = Column(Text, default='')
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class WeiboNoteComment(Base):
     __tablename__ = 'weibo_note_comment'
@@ -250,6 +271,9 @@ class WeiboNoteComment(Base):
     comment_like_count = Column(Text)
     sub_comment_count = Column(Text)
     parent_comment_id = Column(String(255))
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class WeiboCreator(Base):
     __tablename__ = 'weibo_creator'
@@ -307,6 +331,9 @@ class XhsNote(Base):
     note_url = Column(Text)
     source_keyword = Column(Text, default='')
     xsec_token = Column(Text)
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class XhsNoteComment(Base):
     __tablename__ = 'xhs_note_comment'
@@ -325,6 +352,9 @@ class XhsNoteComment(Base):
     pictures = Column(Text)
     parent_comment_id = Column(String(255))
     like_count = Column(Text)
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class TiebaNote(Base):
     __tablename__ = 'tieba_note'
@@ -346,6 +376,9 @@ class TiebaNote(Base):
     add_ts = Column(BigInteger)
     last_modify_ts = Column(BigInteger)
     source_keyword = Column(Text, default='')
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class TiebaComment(Base):
     __tablename__ = 'tieba_comment'
@@ -366,6 +399,9 @@ class TiebaComment(Base):
     note_url = Column(Text)
     add_ts = Column(BigInteger)
     last_modify_ts = Column(BigInteger)
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class TiebaCreator(Base):
     __tablename__ = 'tieba_creator'
@@ -404,6 +440,9 @@ class ZhihuContent(Base):
     user_url_token = Column(Text)
     add_ts = Column(BigInteger)
     last_modify_ts = Column(BigInteger)
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
     # persist-1<persist1@126.com>
     # Reason: Fixed ORM model definition error, ensuring consistency with database table structure.
@@ -429,6 +468,9 @@ class ZhihuComment(Base):
     user_avatar = Column(Text)
     add_ts = Column(BigInteger)
     last_modify_ts = Column(BigInteger)
+    sentiment_label = Column(Text)
+    sentiment_score = Column(Float)
+    sentiment_analyzed_at = Column(BigInteger)
 
 class ZhihuCreator(Base):
     __tablename__ = 'zhihu_creator'

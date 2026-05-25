@@ -295,7 +295,7 @@ docker compose up -d
 Compose 会启动以下服务：
 
 - `api`：新的 SaaS 服务层，FastAPI/Uvicorn，地址为 `http://localhost:8000/api/v1`。
-- `db`：PostgreSQL，用于 MindSpider/业务数据；SaaS API 的任务与配置元数据默认写入 `./data/saas_api.sqlite3`。
+- `db`：PostgreSQL，用于 SaaS 元数据、MindSpider/MediaCrawler 业务数据和 Insight Engine 查询。
 
 > **注：镜像拉取速度慢**，在原 `docker-compose.yml` 文件中，我们已经通过**注释**的方式提供了备用镜像地址供您替换
 
@@ -394,7 +394,7 @@ DB_NAME=your_db_name
 DB_CHARSET=utf8mb4
 # 数据库类型postgresql或mysql
 DB_DIALECT=postgresql
-# SaaS API 会在启动时初始化任务/配置存储；爬虫业务库按 MindSpider 文档初始化
+# SaaS API 元数据、爬虫业务库和 Insight 查询共用以上数据库配置；启动/任务运行时会自动初始化所需表
 
 # ====================== LLM配置 ======================
 # 您可以更改每个部分LLM使用的API，只要兼容OpenAI请求格式都可以
@@ -427,18 +427,20 @@ uv 版本启动命令
 .venv\Scripts\activate
 
 # 也可以直接启动 ASGI 服务
-uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn apps.api.main:create_app --factory --host 0.0.0.0 --port 8000 --reload
 ```
 
-本地接口基准地址为 `http://localhost:8000/api/v1`。请求需要携带
-`X-Workspace-Id`，例如：
+本地接口基准地址为 `http://localhost:8000/api/v1`。当前还没有用户系统，
+用户级 workspace 固定为 `workspace_demo`；请求未携带 `X-Workspace-Id`
+时会使用该默认值，也可以显式传入：
 
 ```bash
-curl -H "X-Workspace-Id: workspace_console" \
+curl -H "X-Workspace-Id: workspace_demo" \
   http://localhost:8000/api/v1/health
 ```
 
-报告任务会在创建时生成独立的产物 workspace，ReportEngine 日志和导出文件都写入该任务目录。
+报告任务产物按用户级 workspace 和任务级 task_id 分层保存：
+`data/saas_api_artifacts/workspaces/workspace_demo/{task_id}/`。同一用户提交的多个任务会落在同一个 workspace 下的不同 task_id 目录。
 
 Docker Compose 默认启用真实任务 worker：报告任务调用 ReportEngine，爬虫任务调用
 MindSpider/MediaCrawler。运行前请配置 LLM、数据库与爬虫账号/子模块；如果依赖缺失，

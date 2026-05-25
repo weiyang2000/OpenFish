@@ -53,6 +53,11 @@ def test_run_crawler_reports_new_database_records(
     monkeypatch.setattr(crawler, "configure_mediacrawler_db", lambda: True)
     monkeypatch.setattr(crawler, "create_base_config", lambda *_: True)
     monkeypatch.setattr(crawler, "_count_platform_records", lambda _: next(counts))
+    monkeypatch.setattr(
+        crawler,
+        "_postprocess_sentiment",
+        lambda _: {"processed": 8, "updated": 8, "failed": 0},
+    )
 
     def fake_run(cmd, timeout):
         del timeout
@@ -65,6 +70,7 @@ def test_run_crawler_reports_new_database_records(
     assert result["success"] is True
     assert result["notes_count"] == 3
     assert result["comments_count"] == 5
+    assert result["sentiment"]["updated"] == 8
 
 
 def test_run_crawler_treats_invalid_cookie_as_failed(

@@ -64,7 +64,8 @@ class SearchRunRequest(BaseModel):
 class ReportOrchestrationScope(BaseModel):
     enabled: bool = True
     engines: list[Literal["query", "media", "insight"]] = Field(
-        default_factory=lambda: ["query", "media", "insight"]
+        default_factory=lambda: ["query", "media", "insight"],
+        min_length=1,
     )
 
     @field_validator("engines")
@@ -101,6 +102,19 @@ class CreateReportTaskRequest(BaseModel):
         if invalid:
             raise ValueError(f"unsupported report formats: {', '.join(invalid)}")
         return list(dict.fromkeys(formats))
+
+
+class RerunReportTaskRequest(BaseModel):
+    engines: list[Literal["query", "media", "insight"]] = Field(min_length=1)
+
+    @field_validator("engines")
+    @classmethod
+    def validate_report_engines(cls, value: list[str]) -> list[str]:
+        allowed = {"query", "media", "insight"}
+        invalid = sorted(set(value) - allowed)
+        if invalid:
+            raise ValueError(f"unsupported report orchestration engines: {', '.join(invalid)}")
+        return list(dict.fromkeys(value))
 
 
 class CrawlFrequency(BaseModel):

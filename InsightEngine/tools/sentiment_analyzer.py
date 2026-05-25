@@ -1,6 +1,8 @@
 """
-多语言情感分析工具
-基于WeiboMultilingualSentiment模型为InsightEngine提供情感分析功能
+多语言情感分析工具。
+
+该模块现在主要供爬虫后处理写回 sentiment_label / sentiment_score 使用；
+InsightEngine 查询阶段直接读取表内字段，不再调用此模型。
 """
 
 import os
@@ -79,7 +81,7 @@ class BatchSentimentResult:
 class WeiboMultilingualSentimentAnalyzer:
     """
     多语言情感分析器
-    封装WeiboMultilingualSentiment模型，为AI Agent提供情感分析功能
+    封装WeiboMultilingualSentiment模型，为爬虫后处理提供情感分析能力
     """
 
     def __init__(self):

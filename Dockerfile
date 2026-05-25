@@ -146,4 +146,4 @@ RUN mkdir -p logs final_reports engine_reports
 EXPOSE 8000
 
 # Default command launches the FastAPI service layer
-CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "apps.api.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

@@ -37,12 +37,23 @@ test("validates and creates a report task", async ({ page }) => {
 
   await expect(page.getByLabel("模板")).toHaveValue("auto");
   await expect(page.getByRole("option", { name: "自动选择" })).toBeAttached();
+  await expect(page.getByLabel("Query Engine")).toBeChecked();
+  await expect(page.getByLabel("Media Engine")).toBeChecked();
+  await expect(page.getByLabel("Insight Engine")).toBeChecked();
 
   await page.getByPlaceholder("输入报告主题").fill("BET-5 前端报告任务");
+  await page.getByLabel("Query Engine").uncheck();
+  await page.getByLabel("Media Engine").uncheck();
+  await page.getByLabel("Insight Engine").uncheck();
+  await page.getByRole("button", { name: "创建报告" }).click();
+  await expect(page.getByText("至少选择一个分析引擎")).toBeVisible();
+
+  await page.getByLabel("Insight Engine").check();
   await page.getByRole("button", { name: "创建报告" }).click();
 
   await expect(page.getByText("报告任务已创建")).toBeVisible();
   await expect(page.getByText("BET-5 前端报告任务")).toBeVisible();
+  await expect(page.locator(".task-row", { hasText: "BET-5 前端报告任务" })).toContainText("Insight Engine");
 });
 
 test("validates crawler platform selection and creates a crawler task", async ({ page }) => {
@@ -121,8 +132,16 @@ test("searches crawler database records", async ({ page }) => {
   await page.getByRole("button", { name: "爬取数据" }).click();
 
   await expect(page.getByRole("heading", { name: "爬取数据库" })).toBeVisible();
+  await expect(page.getByTitle("刷新爬取数据")).toBeVisible();
   await expect(page.getByText("社区养老服务体验")).toBeVisible();
   await expect(page.getByText("正向").first()).toBeVisible();
+  await expect(page.getByText("xhs_note", { exact: true })).toHaveCount(0);
+  const contentRow = page.locator(".crawler-data-row", { hasText: "社区养老服务体验" });
+  await expect(contentRow.getByTitle("打开原文")).toBeVisible();
+  await expect(contentRow.getByTitle("删除爬取数据")).toBeVisible();
+  await contentRow.getByTitle("删除爬取数据").click();
+  await expect(page.getByText("爬取数据已删除")).toBeVisible();
+  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toHaveCount(0);
   await page.getByLabel("类型").selectOption("comment");
   await page.getByPlaceholder("标题、正文、作者、关键词").fill("助餐");
   await page.getByRole("button", { name: "检索" }).click();

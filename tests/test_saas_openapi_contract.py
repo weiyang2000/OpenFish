@@ -15,7 +15,7 @@ from apps.api.services.tasks import TaskService
 from apps.api.storage import Store
 
 
-WORKSPACE_HEADERS = {"X-Workspace-Id": "workspace_contract"}
+WORKSPACE_HEADERS = {"X-Workspace-Id": "workspace_demo"}
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 
 
@@ -83,6 +83,7 @@ def test_runtime_openapi_exposes_key_contract_operations(client: TestClient):
         "/api/v1/report-tasks/{task_id}/logs",
         "/api/v1/report-tasks/{task_id}",
         "/api/v1/report-tasks/{task_id}:cancel",
+        "/api/v1/report-tasks/{task_id}:rerun",
         "/api/v1/crawler-accounts",
         "/api/v1/crawler-accounts/login-sessions",
         "/api/v1/crawler-data",
@@ -98,8 +99,8 @@ def test_runtime_openapi_exposes_key_contract_operations(client: TestClient):
 
 def test_contract_error_cases_return_structured_errors(client: TestClient):
     missing_header = client.get("/api/v1/health")
-    assert missing_header.status_code == 422
-    assert missing_header.json()["error"]["code"] == "VALIDATION_ERROR"
+    assert missing_header.status_code == 200
+    assert missing_header.json()["workspaceId"] == "workspace_demo"
 
     invalid_report = client.post(
         "/api/v1/report-tasks",
@@ -152,6 +153,44 @@ def test_contract_error_cases_return_structured_errors(client: TestClient):
     )
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "CONFLICT"
+
+
+def test_report_task_accepts_single_and_multiple_orchestration_engines(client: TestClient):
+    single = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "单引擎报告",
+            "sourceScope": {"orchestration": {"enabled": True, "engines": ["query"]}},
+            "outputFormats": ["html"],
+        },
+    )
+    assert single.status_code == 202
+    assert single.json()["task"]["sourceScope"]["orchestration"]["engines"] == ["query"]
+
+    multiple = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "多引擎报告",
+            "sourceScope": {"orchestration": {"enabled": True, "engines": ["query", "media"]}},
+            "outputFormats": ["html"],
+        },
+    )
+    assert multiple.status_code == 202
+    assert multiple.json()["task"]["sourceScope"]["orchestration"]["engines"] == ["query", "media"]
+
+    empty = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "空引擎报告",
+            "sourceScope": {"orchestration": {"enabled": True, "engines": []}},
+            "outputFormats": ["html"],
+        },
+    )
+    assert empty.status_code == 422
+    assert empty.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 def test_crawler_strategy_contract_sample_preserves_platform_id(

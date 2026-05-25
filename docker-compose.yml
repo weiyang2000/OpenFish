@@ -13,23 +13,23 @@ services:
     restart: unless-stopped
     depends_on:
       - db
-    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn apps.api.main:create_app --factory --host 0.0.0.0 --port 8000
     environment:
       - PYTHONUNBUFFERED=1
-      - BETTAFISH_API_DB_PATH=/app/data/saas_api.sqlite3
       - BETTAFISH_API_ARTIFACT_DIR=/app/data/saas_api_artifacts
       - BETTAFISH_API_RUN_WORKERS=${BETTAFISH_API_RUN_WORKERS:-true}
       - BETTAFISH_API_CRAWLER_ADAPTER=${BETTAFISH_API_CRAWLER_ADAPTER:-real}
       - BETTAFISH_API_CORS_ORIGINS=${BETTAFISH_API_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000}
       - BETTAFISH_CRAWLER_BROWSER_DATA_DIR=${BETTAFISH_CRAWLER_BROWSER_DATA_DIR:-/app/data/browser_data}
-      - BETTAFISH_CRAWLER_DB_URL=${BETTAFISH_CRAWLER_DB_URL:-}
       - DISPLAY=${DISPLAY:-}
-      - DB_DIALECT=postgresql
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=${POSTGRES_USER:-bettafish}
-      - DB_PASSWORD=${POSTGRES_PASSWORD:-bettafish}
-      - DB_NAME=${POSTGRES_DB:-bettafish}
+      - DATABASE_URL=${DATABASE_URL:-}
+      - DB_DIALECT=${DB_DIALECT:-postgresql}
+      - DB_HOST=${DB_HOST:-db}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-bettafish}
+      - DB_PASSWORD=${DB_PASSWORD:-bettafish}
+      - DB_NAME=${DB_NAME:-bettafish}
+      - DB_CHARSET=${DB_CHARSET:-utf8mb4}
     ports:
       - "8000:8000"
     volumes:
@@ -59,9 +59,9 @@ services:
     container_name: bettafish-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-bettafish}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bettafish}
-      POSTGRES_DB: ${POSTGRES_DB:-bettafish}
+      POSTGRES_USER: ${DB_USER:-bettafish}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-bettafish}
+      POSTGRES_DB: ${DB_NAME:-bettafish}
     ports:
       - "${POSTGRES_PORT:-5444}:5432"
     volumes:

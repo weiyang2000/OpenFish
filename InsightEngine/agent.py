@@ -7,7 +7,7 @@ import json
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from loguru import logger
@@ -28,7 +28,6 @@ from .tools import (
     DBResponse,
     MediaCrawlerDB,
     keyword_optimizer,
-    multilingual_sentiment_analyzer,
 )
 from .utils import format_search_results_for_prompt
 from .utils.config import Settings, settings
@@ -59,9 +58,6 @@ class DeepSearchAgent:
         # 初始化聚类小模型（懒加载）
         self._clustering_model = None
 
-        # 初始化情感分析器
-        self.sentiment_analyzer = multilingual_sentiment_analyzer
-
         # 初始化节点
         self._initialize_nodes()
 
@@ -74,7 +70,7 @@ class DeepSearchAgent:
         logger.info(f"Insight Agent已初始化")
         logger.info(f"使用LLM: {self.llm_client.get_model_info()}")
         logger.info(f"搜索工具集: MediaCrawlerDB (支持5种本地数据库查询工具)")
-        logger.info(f"情感分析: WeiboMultilingualSentiment (支持22种语言的情感分析)")
+        logger.info("情绪分析: 使用爬虫表内 sentiment_label/sentiment_score 字段")
 
     def _initialize_llm(self) -> LLMClient:
         """初始化LLM客户端"""
@@ -189,7 +185,7 @@ class DeepSearchAgent:
 
     def execute_search_tool(self, tool_name: str, query: str, **kwargs) -> DBResponse:
         """
-        执行指定的数据库查询工具（集成关键词优化中间件和情感分析）
+        执行指定的数据库查询工具（集成关键词优化中间件，情绪字段来自爬虫表）
 
         Args:
             tool_name: 工具名称，可选值：
@@ -198,13 +194,11 @@ class DeepSearchAgent:
                 - "search_topic_by_date": 按日期搜索话题
                 - "get_comments_for_topic": 获取话题评论
                 - "search_topic_on_platform": 平台定向搜索
-                - "analyze_sentiment": 对查询结果进行情感分析
             query: 搜索关键词/话题
-            **kwargs: 额外参数（如start_date, end_date, platform, limit, enable_sentiment等）
-                     enable_sentiment: 是否自动对搜索结果进行情感分析（默认True）
+            **kwargs: 额外参数（如start_date, end_date, platform, limit等）
 
         Returns:
-            DBResponse对象（可能包含情感分析结果）
+            DBResponse对象（可能包含基于表字段的情绪统计）
         """
         logger.info(f"  → 执行数据库查询工具: {tool_name}")
 
@@ -216,33 +210,16 @@ class DeepSearchAgent:
                 time_period=time_period, limit=limit
             )
 
-            # 检查是否需要进行情感分析
-            enable_sentiment = kwargs.get("enable_sentiment", True)
-            if enable_sentiment and response.results and len(response.results) > 0:
-                logger.info(f"  🎭 开始对热点内容进行情感分析...")
-                sentiment_analysis = self._perform_sentiment_analysis(response.results)
-                if sentiment_analysis:
-                    # 将情感分析结果添加到响应的parameters中
-                    response.parameters["sentiment_analysis"] = sentiment_analysis
-                    logger.info(f"  ✅ 情感分析完成")
-
+            self._attach_stored_sentiment_summary(response)
             return response
 
-        # 独立情感分析工具
         if tool_name == "analyze_sentiment":
-            texts = kwargs.get("texts", query)  # 可以通过texts参数传递，或使用query
-            sentiment_result = self.analyze_sentiment_only(texts)
-
-            # 构建DBResponse格式的响应
             return DBResponse(
                 tool_name="analyze_sentiment",
-                parameters={
-                    "texts": texts if isinstance(texts, list) else [texts],
-                    **kwargs,
-                },
-                results=[],  # 情感分析不返回搜索结果
+                parameters={"query": query, **kwargs},
+                results=[],
                 results_count=0,
-                metadata=sentiment_result,
+                error_message="InsightEngine 不再执行独立情感分析，请使用爬虫表内 sentiment_label/sentiment_score 字段。",
             )
 
         # 对于需要搜索词的工具，使用关键词优化中间件
@@ -356,18 +333,7 @@ class DeepSearchAgent:
             results_count=len(unique_results),
         )
 
-        # 检查是否需要进行情感分析
-        enable_sentiment = kwargs.get("enable_sentiment", True)
-        if enable_sentiment and unique_results and len(unique_results) > 0:
-            logger.info(f"  🎭 开始对搜索结果进行情感分析...")
-            sentiment_analysis = self._perform_sentiment_analysis(unique_results)
-            if sentiment_analysis:
-                # 将情感分析结果添加到响应的parameters中
-                integrated_response.parameters["sentiment_analysis"] = (
-                    sentiment_analysis
-                )
-                logger.info(f"  ✅ 情感分析完成")
-
+        self._attach_stored_sentiment_summary(integrated_response)
         return integrated_response
 
     def _deduplicate_results(self, results: List) -> List:
@@ -386,128 +352,68 @@ class DeepSearchAgent:
 
         return unique_results
 
-    def _perform_sentiment_analysis(self, results: List) -> Optional[Dict[str, Any]]:
-        """
-        对搜索结果执行情感分析
+    def _attach_stored_sentiment_summary(self, response: DBResponse) -> None:
+        if not response.results:
+            return
+        response.parameters["sentiment_analysis"] = self._stored_sentiment_summary(response.results)
 
-        Args:
-            results: 搜索结果列表
+    @staticmethod
+    def _stored_sentiment_summary(results: List) -> Dict[str, Any]:
+        distribution = {"positive": 0, "neutral": 0, "negative": 0, "unknown": 0}
+        high_confidence_results = []
+        confidence_values = []
 
-        Returns:
-            情感分析结果字典，如果失败则返回None
-        """
-        try:
-            # 初始化情感分析器（如果尚未初始化且未被禁用）
-            if (
-                not self.sentiment_analyzer.is_initialized
-                and not self.sentiment_analyzer.is_disabled
-            ):
-                logger.info("    初始化情感分析模型...")
-                if not self.sentiment_analyzer.initialize():
-                    logger.info("     情感分析模型初始化失败，将直接透传原始文本")
-            elif self.sentiment_analyzer.is_disabled:
-                logger.info("     情感分析功能已禁用，直接透传原始文本")
-
-            # 将查询结果转换为字典格式
-            results_dict = []
-            for result in results:
-                result_dict = {
-                    "content": result.title_or_content,
-                    "platform": result.platform,
-                    "author": result.author_nickname,
-                    "url": result.url,
-                    "publish_time": str(result.publish_time)
-                    if result.publish_time
-                    else None,
-                }
-                results_dict.append(result_dict)
-
-            # 执行情感分析
-            sentiment_analysis = self.sentiment_analyzer.analyze_query_results(
-                query_results=results_dict, text_field="content", min_confidence=0.5
-            )
-
-            return sentiment_analysis.get("sentiment_analysis")
-
-        except Exception as e:
-            logger.exception(f"    ❌ 情感分析过程中发生错误: {str(e)}")
-            return None
-
-    def analyze_sentiment_only(self, texts: Union[str, List[str]]) -> Dict[str, Any]:
-        """
-        独立的情感分析工具
-
-        Args:
-            texts: 单个文本或文本列表
-
-        Returns:
-            情感分析结果
-        """
-        logger.info(f"  → 执行独立情感分析")
-
-        try:
-            # 初始化情感分析器（如果尚未初始化且未被禁用）
-            if (
-                not self.sentiment_analyzer.is_initialized
-                and not self.sentiment_analyzer.is_disabled
-            ):
-                logger.info("    初始化情感分析模型...")
-                if not self.sentiment_analyzer.initialize():
-                    logger.info("     情感分析模型初始化失败，将直接透传原始文本")
-            elif self.sentiment_analyzer.is_disabled:
-                logger.warning("     情感分析功能已禁用，直接透传原始文本")
-
-            # 执行分析
-            if isinstance(texts, str):
-                result = self.sentiment_analyzer.analyze_single_text(texts)
-                result_dict = result.__dict__
-                response = {
-                    "success": result.success and result.analysis_performed,
-                    "total_analyzed": 1
-                    if result.analysis_performed and result.success
-                    else 0,
-                    "results": [result_dict],
-                }
-                if not result.analysis_performed:
-                    response["success"] = False
-                    response["warning"] = (
-                        result.error_message or "情感分析功能不可用，已直接返回原始文本"
-                    )
-                return response
-            else:
-                texts_list = list(texts)
-                batch_result = self.sentiment_analyzer.analyze_batch(
-                    texts_list, show_progress=True
-                )
-                response = {
-                    "success": batch_result.analysis_performed
-                    and batch_result.success_count > 0,
-                    "total_analyzed": batch_result.total_processed
-                    if batch_result.analysis_performed
-                    else 0,
-                    "success_count": batch_result.success_count,
-                    "failed_count": batch_result.failed_count,
-                    "average_confidence": batch_result.average_confidence
-                    if batch_result.analysis_performed
-                    else 0.0,
-                    "results": [result.__dict__ for result in batch_result.results],
-                }
-                if not batch_result.analysis_performed:
-                    warning = next(
-                        (
-                            r.error_message
-                            for r in batch_result.results
-                            if r.error_message
+        for result in results:
+            label = result.sentiment_label or "unknown"
+            if label not in distribution:
+                label = "unknown"
+            distribution[label] += 1
+            score = result.sentiment_score
+            if score is not None:
+                confidence_values.append(abs(float(score)))
+            if label != "unknown" and score is not None and abs(float(score)) >= 0.5:
+                high_confidence_results.append(
+                    {
+                        "original_data": {
+                            "content": result.title_or_content,
+                            "platform": result.platform,
+                            "author": result.author_nickname,
+                            "url": result.url,
+                            "publish_time": str(result.publish_time) if result.publish_time else None,
+                            "source_table": result.source_table,
+                        },
+                        "sentiment": label,
+                        "confidence": abs(float(score)),
+                        "text_preview": (
+                            result.title_or_content[:100] + "..."
+                            if len(result.title_or_content) > 100
+                            else result.title_or_content
                         ),
-                        "情感分析功能不可用，已直接返回原始文本",
-                    )
-                    response["success"] = False
-                    response["warning"] = warning
-                return response
+                    }
+                )
 
-        except Exception as e:
-            logger.exception(f"    ❌ 情感分析过程中发生错误: {str(e)}")
-            return {"success": False, "error": str(e), "results": []}
+        total = len(results)
+        analyzed = total - distribution["unknown"]
+        average_confidence = round(sum(confidence_values) / len(confidence_values), 4) if confidence_values else 0.0
+        known_distribution = {key: value for key, value in distribution.items() if key != "unknown" and value}
+        if known_distribution:
+            dominant_label, dominant_count = max(known_distribution.items(), key=lambda item: item[1])
+            summary = (
+                f"基于爬虫表内情绪字段统计，共{total}条内容，"
+                f"已分析{analyzed}条，主要情绪为{dominant_label}({dominant_count}条)。"
+            )
+        else:
+            summary = f"基于爬虫表内情绪字段统计，共{total}条内容，暂无已分析情绪。"
+
+        return {
+            "source": "stored_crawler_fields",
+            "total_analyzed": analyzed,
+            "success_rate": f"{analyzed}/{total}",
+            "average_confidence": average_confidence,
+            "sentiment_distribution": distribution,
+            "high_confidence_results": high_confidence_results,
+            "summary": summary,
+        }
 
     def research(self, query: str, save_report: bool = True) -> str:
         """
@@ -696,6 +602,8 @@ class DeepSearchAgent:
                         "content_type": result.content_type,
                         "author": result.author_nickname,
                         "engagement": result.engagement,
+                        "sentiment_label": result.sentiment_label,
+                        "sentiment_score": result.sentiment_score,
                     }
                 )
 
@@ -858,6 +766,8 @@ class DeepSearchAgent:
                             "content_type": result.content_type,
                             "author": result.author_nickname,
                             "engagement": result.engagement,
+                            "sentiment_label": result.sentiment_label,
+                            "sentiment_score": result.sentiment_score,
                         }
                     )
 

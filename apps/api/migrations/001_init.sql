@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS app_configs (
 );
 
 CREATE TABLE IF NOT EXISTS task_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGSERIAL PRIMARY KEY,
     workspace_id TEXT NOT NULL,
     task_id TEXT NOT NULL,
     task_type TEXT NOT NULL,

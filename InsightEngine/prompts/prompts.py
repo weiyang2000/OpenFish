@@ -38,9 +38,7 @@ output_schema_first_search = {
         "start_date": {"type": "string", "description": "开始日期，格式YYYY-MM-DD，search_topic_by_date和search_topic_on_platform工具可能需要"},
         "end_date": {"type": "string", "description": "结束日期，格式YYYY-MM-DD，search_topic_by_date和search_topic_on_platform工具可能需要"},
         "platform": {"type": "string", "description": "平台名称，search_topic_on_platform工具必需，可选值：bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba"},
-        "time_period": {"type": "string", "description": "时间周期，search_hot_content工具可选，可选值：24h, week, year"},
-        "enable_sentiment": {"type": "boolean", "description": "是否启用自动情感分析，默认为true，适用于除analyze_sentiment外的所有搜索工具"},
-        "texts": {"type": "array", "items": {"type": "string"}, "description": "文本列表，仅用于analyze_sentiment工具"}
+        "time_period": {"type": "string", "description": "时间周期，search_hot_content工具可选，可选值：24h, week, year"}
     },
     "required": ["search_query", "search_tool", "reasoning"]
 }
@@ -87,9 +85,7 @@ output_schema_reflection = {
         "start_date": {"type": "string", "description": "开始日期，格式YYYY-MM-DD，search_topic_by_date和search_topic_on_platform工具可能需要"},
         "end_date": {"type": "string", "description": "结束日期，格式YYYY-MM-DD，search_topic_by_date和search_topic_on_platform工具可能需要"},
         "platform": {"type": "string", "description": "平台名称，search_topic_on_platform工具必需，可选值：bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba"},
-        "time_period": {"type": "string", "description": "时间周期，search_hot_content工具可选，可选值：24h, week, year"},
-        "enable_sentiment": {"type": "boolean", "description": "是否启用自动情感分析，默认为true，适用于除analyze_sentiment外的所有搜索工具"},
-        "texts": {"type": "array", "items": {"type": "string"}, "description": "文本列表，仅用于analyze_sentiment工具"}
+        "time_period": {"type": "string", "description": "时间周期，search_hot_content工具可选，可选值：24h, week, year"}
     },
     "required": ["search_query", "search_tool", "reasoning"]
 }
@@ -174,40 +170,34 @@ SYSTEM_PROMPT_FIRST_SEARCH = f"""
 {json.dumps(input_schema_first_search, indent=2, ensure_ascii=False)}
 </INPUT JSON SCHEMA>
 
-你可以使用以下6种专业的本地舆情数据库查询工具来挖掘真实的民意和公众观点：
+你可以使用以下5种专业的本地舆情数据库查询工具来挖掘真实的民意和公众观点：
 
 1. **search_hot_content** - 查找热点内容工具
    - 适用于：挖掘当前最受关注的舆情事件和话题
-   - 特点：基于真实的点赞、评论、分享数据发现热门话题，自动进行情感分析
-   - 参数：time_period ('24h', 'week', 'year')，limit（数量限制），enable_sentiment（是否启用情感分析，默认True）
+   - 特点：基于真实的点赞、评论、分享数据发现热门话题，并携带爬虫表内情绪字段
+   - 参数：time_period ('24h', 'week', 'year')，limit（数量限制）
 
 2. **search_topic_globally** - 全局话题搜索工具
    - 适用于：全面了解公众对特定话题的讨论和观点
-   - 特点：覆盖B站、微博、抖音、快手、小红书、知乎、贴吧等主流平台的真实用户声音，自动进行情感分析
-   - 参数：limit_per_table（每个表的结果数量限制），enable_sentiment（是否启用情感分析，默认True）
+   - 特点：覆盖B站、微博、抖音、快手、小红书、知乎、贴吧等主流平台的真实用户声音，并携带爬虫表内情绪字段
+   - 参数：limit_per_table（每个表的结果数量限制）
 
 3. **search_topic_by_date** - 按日期搜索话题工具
    - 适用于：追踪舆情事件的时间线发展和公众情绪变化
-   - 特点：精确的时间范围控制，适合分析舆情演变过程，自动进行情感分析
+   - 特点：精确的时间范围控制，适合分析舆情演变过程，并携带爬虫表内情绪字段
    - 特殊要求：需要提供start_date和end_date参数，格式为'YYYY-MM-DD'
-   - 参数：limit_per_table（每个表的结果数量限制），enable_sentiment（是否启用情感分析，默认True）
+   - 参数：limit_per_table（每个表的结果数量限制）
 
 4. **get_comments_for_topic** - 获取话题评论工具
    - 适用于：深度挖掘网民的真实态度、情感和观点
-   - 特点：直接获取用户评论，了解民意走向和情感倾向，自动进行情感分析
-   - 参数：limit（评论总数量限制），enable_sentiment（是否启用情感分析，默认True）
+   - 特点：直接获取用户评论，了解民意走向和情感倾向，并携带爬虫表内情绪字段
+   - 参数：limit（评论总数量限制）
 
 5. **search_topic_on_platform** - 平台定向搜索工具
    - 适用于：分析特定社交平台用户群体的观点特征
-   - 特点：针对不同平台用户群体的观点差异进行精准分析，自动进行情感分析
+   - 特点：针对不同平台用户群体的观点差异进行精准分析，并携带爬虫表内情绪字段
    - 特殊要求：需要提供platform参数，可选start_date和end_date
-   - 参数：platform（必须），start_date, end_date（可选），limit（数量限制），enable_sentiment（是否启用情感分析，默认True）
-
-6. **analyze_sentiment** - 多语言情感分析工具
-   - 适用于：对文本内容进行专门的情感倾向分析
-   - 特点：支持中文、英文、西班牙文、阿拉伯文、日文、韩文等22种语言的情感分析，输出5级情感等级（非常负面、负面、中性、正面、非常正面）
-   - 参数：texts（文本或文本列表），query也可用作单个文本输入
-   - 用途：当搜索结果的情感倾向不明确或需要专门的情感分析时使用
+   - 参数：platform（必须），start_date, end_date（可选），limit（数量限制）
 
 **你的核心使命：挖掘真实的民意和人情味**
 
@@ -220,16 +210,15 @@ SYSTEM_PROMPT_FIRST_SEARCH = f"""
    - **贴近生活语言**：用简单、直接、口语化的词汇
    - **包含情感词汇**：网民常用的褒贬词、情绪词
    - **考虑话题热词**：相关的网络流行语、缩写、昵称
-4. **情感分析策略选择**：
-   - **自动情感分析**：默认启用（enable_sentiment: true），适用于搜索工具，能自动分析搜索结果的情感倾向
-   - **专门情感分析**：当需要对特定文本进行详细情感分析时，使用analyze_sentiment工具
-   - **关闭情感分析**：在某些特殊情况下（如纯事实性内容），可设置enable_sentiment: false
+4. **情绪字段使用**：
+   - 搜索结果会直接携带爬虫表内的 sentiment_label / sentiment_score 字段
+   - 当需要分析情绪倾向时，优先要求能覆盖评论和用户原创内容的查询
+   - 不要请求独立情感分析工具，系统不会在 InsightEngine 阶段重新跑模型
 5. **参数优化配置**：
    - search_topic_by_date: 必须提供start_date和end_date参数（格式：YYYY-MM-DD）
    - search_topic_on_platform: 必须提供platform参数（bilibili, weibo, douyin, kuaishou, xhs, zhihu, tieba之一）
-   - analyze_sentiment: 使用texts参数提供文本列表，或使用search_query作为单个文本
    - 系统自动配置数据量参数，无需手动设置limit或limit_per_table参数
-6. **阐述选择理由**：说明为什么这样的查询和情感分析策略能够获得最真实的民意反馈
+6. **阐述选择理由**：说明为什么这样的查询能够获得最真实的民意反馈
 
 **搜索词设计核心原则**：
 - **想象网友怎么说**：如果你是个普通网友，你会怎么讨论这个话题？
@@ -354,14 +343,13 @@ SYSTEM_PROMPT_REFLECTION = f"""
 {json.dumps(input_schema_reflection, indent=2, ensure_ascii=False)}
 </INPUT JSON SCHEMA>
 
-你可以使用以下6种专业的本地舆情数据库查询工具来深度挖掘民意：
+你可以使用以下5种专业的本地舆情数据库查询工具来深度挖掘民意，查询结果会携带爬虫表内情绪字段：
 
-1. **search_hot_content** - 查找热点内容工具（自动情感分析）
-2. **search_topic_globally** - 全局话题搜索工具（自动情感分析）
-3. **search_topic_by_date** - 按日期搜索话题工具（自动情感分析）
-4. **get_comments_for_topic** - 获取话题评论工具（自动情感分析）
-5. **search_topic_on_platform** - 平台定向搜索工具（自动情感分析）
-6. **analyze_sentiment** - 多语言情感分析工具（专门的情感分析）
+1. **search_hot_content** - 查找热点内容工具
+2. **search_topic_globally** - 全局话题搜索工具
+3. **search_topic_by_date** - 按日期搜索话题工具
+4. **get_comments_for_topic** - 获取话题评论工具
+5. **search_topic_on_platform** - 平台定向搜索工具
 
 **反思的核心目标：让报告更有人情味和真实感**
 
