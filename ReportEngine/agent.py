@@ -252,6 +252,10 @@ class ReportAgent:
 
             使用路径匹配为主，无法获取路径时退化到模块名。
             """
+            report_task_id = getattr(self.config, "REPORT_TASK_ID", None)
+            if report_task_id and record["extra"].get("report_task_id") != report_task_id:
+                return False
+
             excluded_keywords = ("InsightEngine", "MediaEngine", "QueryEngine", "ForumEngine")
             try:
                 file_path = record["file"].path

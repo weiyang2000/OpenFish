@@ -266,11 +266,12 @@ def build_router() -> APIRouter:
         workspace_id: str = Depends(workspace_header),
         last_event_id: str | None = Header(None, alias="Last-Event-ID"),
     ) -> StreamingResponse:
-        request.app.state.task_service.get_report_task(workspace_id, task_id)
+        task = request.app.state.task_service.get_report_task(workspace_id, task_id)
+        event_workspace_id = task.get("tenantId") or workspace_id
         after_id = _parse_event_id(last_event_id)
 
         def generate():
-            events = request.app.state.task_service.list_events(workspace_id, task_id, after_id)
+            events = request.app.state.task_service.list_events(event_workspace_id, task_id, after_id)
             if not events:
                 events = [
                     {
@@ -293,10 +294,10 @@ def build_router() -> APIRouter:
         workspace_id: str = Depends(workspace_header),
         after_id: int | None = Query(None, alias="afterId", ge=0),
     ) -> dict[str, Any]:
-        request.app.state.task_service.get_report_task(workspace_id, task_id)
+        task = request.app.state.task_service.get_report_task(workspace_id, task_id)
         return task_log_response(
             request.app.state.task_service,
-            workspace_id,
+            task.get("tenantId") or workspace_id,
             task_id,
             "report",
             after_id,
@@ -331,7 +332,11 @@ def build_router() -> APIRouter:
         workspace_id: str = Depends(workspace_header),
     ):
         task = request.app.state.task_service.get_report_task(workspace_id, task_id)
-        path = request.app.state.task_service.artifact_path(task_id, report_format)
+        path = request.app.state.task_service.artifact_path(
+            task_id,
+            report_format,
+            task["workspaceId"],
+        )
         artifact = next(
             (
                 item

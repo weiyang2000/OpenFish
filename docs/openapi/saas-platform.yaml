@@ -925,10 +925,10 @@ components:
       name: X-Workspace-Id
       in: header
       required: true
-      description: Tenant/workspace scope for all SaaS resources.
+      description: Tenant or console scope. Report tasks create their own artifact workspace id.
       schema:
         type: string
-        example: workspace_demo
+        example: workspace_console
     PageToken:
       name: pageToken
       in: query
@@ -988,9 +988,10 @@ components:
       properties:
         workspaceId:
           type: string
+          description: Resource workspace id. For report tasks this is generated per task and owns artifacts/logs.
         tenantId:
           type: string
-          description: Optional parent tenant/organization id.
+          description: Optional parent tenant/console scope from `X-Workspace-Id`.
 
     UserRef:
       type: object
@@ -1531,6 +1532,7 @@ components:
           type: integer
         downloadUrl:
           type: string
+          description: Browser-ready export URL. Report artifact URLs include the generated task workspace id as `workspaceId`.
         expiresAt:
           type: string
           format: date-time

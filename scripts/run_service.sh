@@ -17,7 +17,7 @@ Environment overrides:
   WEB_HOST                 Next.js bind host, default 127.0.0.1
   WEB_PORT                 Next.js port, default 3000
   NEXT_PUBLIC_API_BASE_URL Frontend API base URL
-  NEXT_PUBLIC_WORKSPACE_ID Frontend workspace id, default workspace_demo
+  NEXT_PUBLIC_WORKSPACE_ID Frontend tenant scope; generated in browser when empty
   NEXT_PUBLIC_USE_MOCKS    Frontend mock mode, default false
   BETTAFISH_API_RUN_WORKERS Enable real task workers, default true
   BETTAFISH_VENV_DIR        Python venv path, default .venv
@@ -58,7 +58,7 @@ export BETTAFISH_API_CRAWLER_ADAPTER="${BETTAFISH_API_CRAWLER_ADAPTER:-real}"
 export WEB_HOST="${WEB_HOST:-127.0.0.1}"
 export WEB_PORT="${WEB_PORT:-3000}"
 export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-http://localhost:${BETTAFISH_API_PORT}/api/v1}"
-export NEXT_PUBLIC_WORKSPACE_ID="${NEXT_PUBLIC_WORKSPACE_ID:-workspace_demo}"
+export NEXT_PUBLIC_WORKSPACE_ID="${NEXT_PUBLIC_WORKSPACE_ID:-}"
 export NEXT_PUBLIC_USE_MOCKS="${NEXT_PUBLIC_USE_MOCKS:-false}"
 export NEXT_TELEMETRY_DISABLED="${NEXT_TELEMETRY_DISABLED:-1}"
 

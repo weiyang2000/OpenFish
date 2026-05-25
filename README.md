@@ -434,9 +434,11 @@ uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
 `X-Workspace-Id`，例如：
 
 ```bash
-curl -H "X-Workspace-Id: workspace_demo" \
+curl -H "X-Workspace-Id: workspace_console" \
   http://localhost:8000/api/v1/health
 ```
+
+报告任务会在创建时生成独立的产物 workspace，ReportEngine 日志和导出文件都写入该任务目录。
 
 Docker Compose 默认启用真实任务 worker：报告任务调用 ReportEngine，爬虫任务调用
 MindSpider/MediaCrawler。运行前请配置 LLM、数据库与爬虫账号/子模块；如果依赖缺失，

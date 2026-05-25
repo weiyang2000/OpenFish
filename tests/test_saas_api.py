@@ -65,6 +65,7 @@ def test_system_config_masks_secrets_and_ignores_mask_placeholder(client: TestCl
             "values": {
                 "REPORT_ENGINE_API_KEY": "sk-real-secret",
                 "SEARCH_TOOL_TYPE": "BochaAPI",
+                "MAX_REFLECTIONS": 2,
             }
         },
     )
@@ -74,6 +75,8 @@ def test_system_config_masks_secrets_and_ignores_mask_placeholder(client: TestCl
     assert fields["REPORT_ENGINE_API_KEY"]["value"] == "********"
     assert fields["REPORT_ENGINE_API_KEY"]["sensitive"] is True
     assert fields["SEARCH_TOOL_TYPE"]["value"] == "BochaAPI"
+    assert fields["MAX_REFLECTIONS"]["value"] == "2"
+    assert fields["MAX_REFLECTIONS"]["type"] == "number"
 
     response = client.patch(
         "/api/v1/system/config",
@@ -82,6 +85,22 @@ def test_system_config_masks_secrets_and_ignores_mask_placeholder(client: TestCl
     )
     assert response.status_code == 200
     assert _config_fields(client)["REPORT_ENGINE_API_KEY"]["value"] == "********"
+
+
+def test_shared_engine_settings_include_reflection_fields():
+    from config import reload_settings
+
+    settings = reload_settings()
+    for key in (
+        "MAX_REFLECTIONS",
+        "MAX_SEARCH_RESULTS_FOR_LLM",
+        "DEFAULT_SEARCH_HOT_CONTENT_LIMIT",
+        "DEFAULT_SEARCH_TOPIC_GLOBALLY_LIMIT_PER_TABLE",
+        "DEFAULT_SEARCH_TOPIC_BY_DATE_LIMIT_PER_TABLE",
+        "DEFAULT_GET_COMMENTS_FOR_TOPIC_LIMIT",
+        "DEFAULT_SEARCH_TOPIC_ON_PLATFORM_LIMIT",
+    ):
+        assert hasattr(settings, key)
 
 
 def test_identity_allow_block_conflict_and_delete(client: TestClient):
@@ -560,6 +579,9 @@ def test_report_task_basic_lifecycle_and_events(client: TestClient):
     )
     assert auto_response.status_code == 202
     assert auto_response.json()["task"]["templateId"] == "auto"
+    assert auto_response.json()["task"]["workspaceId"].startswith("workspace_")
+    assert auto_response.json()["task"]["workspaceId"] != WORKSPACE_HEADERS["X-Workspace-Id"]
+    assert auto_response.json()["task"]["tenantId"] == WORKSPACE_HEADERS["X-Workspace-Id"]
 
     create_response = client.post(
         "/api/v1/report-tasks",
@@ -573,11 +595,15 @@ def test_report_task_basic_lifecycle_and_events(client: TestClient):
     assert create_response.status_code == 202
     task = create_response.json()["task"]
     assert task["status"] == "queued"
+    assert task["workspaceId"].startswith("workspace_")
+    assert task["workspaceId"] != WORKSPACE_HEADERS["X-Workspace-Id"]
+    assert task["tenantId"] == WORKSPACE_HEADERS["X-Workspace-Id"]
     assert create_response.json()["eventStreamUrl"].endswith(f"{task['id']}/events")
 
     get_response = client.get(f"/api/v1/report-tasks/{task['id']}", headers=WORKSPACE_HEADERS)
     assert get_response.status_code == 200
     assert get_response.json()["task"]["topic"] == "养老服务发展趋势"
+    assert get_response.json()["task"]["workspaceId"] == task["workspaceId"]
 
     event_response = client.get(
         f"/api/v1/report-tasks/{task['id']}/events",
@@ -621,11 +647,14 @@ def test_report_export_browser_url_and_task_delete(client: TestClient):
         },
     )
     assert create_response.status_code == 202
-    task_id = create_response.json()["task"]["id"]
+    task = create_response.json()["task"]
+    task_id = task["id"]
+    task_workspace_id = task["workspaceId"]
 
     task_service: TaskService = client.app.state.task_service
-    html_path = task_service.artifact_path(task_id, "html")
-    pdf_path = task_service.artifact_path(task_id, "pdf")
+    html_path = task_service.artifact_path(task_id, "html", task_workspace_id)
+    pdf_path = task_service.artifact_path(task_id, "pdf", task_workspace_id)
+    html_path.parent.mkdir(parents=True, exist_ok=True)
     html_path.write_text("<!doctype html><h1>报告下载</h1>", encoding="utf-8")
     pdf_path.write_bytes(b"%PDF-1.4\n%EOF\n")
     task_service._complete_report_task(
@@ -637,26 +666,26 @@ def test_report_export_browser_url_and_task_delete(client: TestClient):
                 "ready": True,
                 "filename": "report.html",
                 "sizeBytes": html_path.stat().st_size,
-                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/html",
+                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/html?workspaceId={task_workspace_id}",
             },
             {
                 "format": "pdf",
                 "ready": True,
                 "filename": "report.pdf",
                 "sizeBytes": pdf_path.stat().st_size,
-                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/pdf",
+                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/pdf?workspaceId={task_workspace_id}",
             },
         ],
     )
 
     html_export = client.get(
-        f"/api/v1/report-tasks/{task_id}/exports/html?workspaceId={WORKSPACE_HEADERS['X-Workspace-Id']}"
+        f"/api/v1/report-tasks/{task_id}/exports/html?workspaceId={task_workspace_id}"
     )
     assert html_export.status_code == 200
     assert "text/html" in html_export.headers["content-type"]
 
     pdf_export = client.get(
-        f"/api/v1/report-tasks/{task_id}/exports/pdf?workspaceId={WORKSPACE_HEADERS['X-Workspace-Id']}"
+        f"/api/v1/report-tasks/{task_id}/exports/pdf?workspaceId={task_workspace_id}"
     )
     assert pdf_export.status_code == 200
     assert "application/pdf" in pdf_export.headers["content-type"]
@@ -747,6 +776,7 @@ def test_report_worker_uses_topic_seed_when_inputs_are_empty(
     )
     assert create_response.status_code == 202
     task_id = create_response.json()["task"]["id"]
+    task_workspace_id = create_response.json()["task"]["workspaceId"]
 
     task_service: TaskService = client.app.state.task_service
     task_service._run_report_worker(WORKSPACE_HEADERS["X-Workspace-Id"], task_id)
@@ -756,6 +786,8 @@ def test_report_worker_uses_topic_seed_when_inputs_are_empty(
     assert captured["query"] == "COTY香水舆情分析"
     assert orchestration_calls
     assert task_id in orchestration_calls[0]
+    assert task_workspace_id in orchestration_calls[0]
+    assert WORKSPACE_HEADERS["X-Workspace-Id"] not in orchestration_calls[0]
     assert captured["config"].REPORT_ENGINE_API_KEY == "sk-test-report"
     assert captured["config"].REPORT_ENGINE_MODEL_NAME == "test-report-model"
     from ReportEngine.utils.config import settings as report_settings
@@ -917,7 +949,9 @@ def test_report_worker_orchestrates_pre_report_engines_before_report(
         },
     )
     assert create_response.status_code == 202
-    task_id = create_response.json()["task"]["id"]
+    created_task = create_response.json()["task"]
+    task_id = created_task["id"]
+    task_workspace_id = created_task["workspaceId"]
 
     task_service: TaskService = client.app.state.task_service
     task_service._run_report_worker(WORKSPACE_HEADERS["X-Workspace-Id"], task_id)
@@ -934,10 +968,14 @@ def test_report_worker_orchestrates_pre_report_engines_before_report(
     assert captured["call_order"]
     assert all(item.endswith("_after_True") for item in captured["call_order"])
     assert task_id in captured["report_config"].OUTPUT_DIR
+    assert task_workspace_id in captured["report_config"].OUTPUT_DIR
+    assert captured["report_config"].LOG_FILE.endswith("/report/report_engine.log")
+    assert captured["report_config"].REPORT_TASK_ID == task_id
 
     orchestration = completed["sourceScope"]["orchestration"]
     assert orchestration["status"] == "succeeded"
     assert task_id in orchestration["workspacePath"]
+    assert task_workspace_id in orchestration["workspacePath"]
     for engine_id in ("query", "media", "insight"):
         assert orchestration["engines"][engine_id]["status"] == "succeeded"
         assert Path(orchestration["engines"][engine_id]["artifactPath"]).exists()

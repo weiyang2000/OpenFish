@@ -92,6 +92,24 @@ class Settings:
         self.BOCHA_WEB_SEARCH_API_KEY = _env_str("BOCHA_WEB_SEARCH_API_KEY")
         self.BOCHA_API_KEY = _env_str("BOCHA_API_KEY", self.BOCHA_WEB_SEARCH_API_KEY)
 
+        self.SEARCH_TIMEOUT = _env_int("SEARCH_TIMEOUT", 240)
+        self.DEFAULT_SEARCH_HOT_CONTENT_LIMIT = _env_int("DEFAULT_SEARCH_HOT_CONTENT_LIMIT", 100)
+        self.DEFAULT_SEARCH_TOPIC_GLOBALLY_LIMIT_PER_TABLE = _env_int(
+            "DEFAULT_SEARCH_TOPIC_GLOBALLY_LIMIT_PER_TABLE",
+            50,
+        )
+        self.DEFAULT_SEARCH_TOPIC_BY_DATE_LIMIT_PER_TABLE = _env_int(
+            "DEFAULT_SEARCH_TOPIC_BY_DATE_LIMIT_PER_TABLE",
+            100,
+        )
+        self.DEFAULT_GET_COMMENTS_FOR_TOPIC_LIMIT = _env_int("DEFAULT_GET_COMMENTS_FOR_TOPIC_LIMIT", 500)
+        self.DEFAULT_SEARCH_TOPIC_ON_PLATFORM_LIMIT = _env_int("DEFAULT_SEARCH_TOPIC_ON_PLATFORM_LIMIT", 200)
+        self.MAX_SEARCH_RESULTS_FOR_LLM = _env_int("MAX_SEARCH_RESULTS_FOR_LLM", 0)
+        self.MAX_HIGH_CONFIDENCE_SENTIMENT_RESULTS = _env_int("MAX_HIGH_CONFIDENCE_SENTIMENT_RESULTS", 0)
+        self.MAX_REFLECTIONS = _env_int("MAX_REFLECTIONS", 3)
+        self.MAX_PARAGRAPHS = _env_int("MAX_PARAGRAPHS", 6)
+        self.MAX_SEARCH_RESULTS = _env_int("MAX_SEARCH_RESULTS", 20)
+
         self.OUTPUT_DIR = _env_str("OUTPUT_DIR", "final_reports")
         self.CHAPTER_OUTPUT_DIR = _env_str("CHAPTER_OUTPUT_DIR", "engine_reports/report_chapters")
         self.DOCUMENT_IR_OUTPUT_DIR = _env_str("DOCUMENT_IR_OUTPUT_DIR", "engine_reports/document_ir")

@@ -103,6 +103,7 @@ class TaskService:
         payload: CreateReportTaskRequest,
     ) -> dict[str, Any]:
         task_id = new_id("report")
+        task_workspace_id = new_id("workspace")
         now = utc_now()
         formats = payload.outputFormats or ["html"]
         template_id = self._normalize_report_template_id(payload.templateId)
@@ -110,20 +111,21 @@ class TaskService:
             {
                 "format": item,
                 "ready": False,
-                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{item}",
+                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{item}?workspaceId={task_workspace_id}",
             }
             for item in formats
         ]
         self.store.execute(
             """
             INSERT INTO report_tasks (
-                id, workspace_id, topic, status, progress, stage, template_id,
+                id, workspace_id, tenant_id, topic, status, progress, stage, template_id,
                 source_scope_json, output_formats_json, artifacts_json,
                 owner_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
+                task_workspace_id,
                 workspace_id,
                 payload.topic,
                 "queued",
@@ -154,8 +156,8 @@ class TaskService:
         status: str | None,
         page_size: int,
     ) -> list[dict[str, Any]]:
-        params: list[Any] = [workspace_id]
-        where = "workspace_id = ?"
+        params: list[Any] = [workspace_id, workspace_id]
+        where = "(tenant_id = ? OR workspace_id = ?)"
         if status:
             where += " AND status = ?"
             params.append(status)
@@ -174,8 +176,8 @@ class TaskService:
 
     def get_report_task(self, workspace_id: str, task_id: str) -> dict[str, Any]:
         row = self.store.query_one(
-            "SELECT * FROM report_tasks WHERE workspace_id = ? AND id = ?",
-            (workspace_id, task_id),
+            "SELECT * FROM report_tasks WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)",
+            (task_id, workspace_id, workspace_id),
         )
         if not row:
             raise ApiError("NOT_FOUND", "Report task not found", status_code=404)
@@ -202,9 +204,9 @@ class TaskService:
             UPDATE report_tasks
             SET status = 'cancelled', progress = progress, stage = 'failed',
                 error_json = ?, updated_at = ?
-            WHERE workspace_id = ? AND id = ?
+            WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)
             """,
-            (dumps(error), now, workspace_id, task_id),
+            (dumps(error), now, task_id, workspace_id, workspace_id),
         )
         task = self.get_report_task(workspace_id, task_id)
         self.add_event(workspace_id, task_id, "report", "cancelled", {"task": task})
@@ -218,14 +220,14 @@ class TaskService:
                 "Report task is still running. Cancel it before deleting.",
                 status_code=409,
             )
-        self._delete_report_artifacts(task_id)
+        self._delete_report_artifacts(task_id, task["workspaceId"])
         self.store.execute(
-            "DELETE FROM task_events WHERE workspace_id = ? AND task_id = ? AND task_type = 'report'",
-            (workspace_id, task_id),
+            "DELETE FROM task_events WHERE task_id = ? AND task_type = 'report'",
+            (task_id,),
         )
         self.store.execute(
-            "DELETE FROM report_tasks WHERE workspace_id = ? AND id = ?",
-            (workspace_id, task_id),
+            "DELETE FROM report_tasks WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)",
+            (task_id, workspace_id, workspace_id),
         )
 
     def get_report_result(self, workspace_id: str, task_id: str) -> dict[str, Any]:
@@ -237,27 +239,34 @@ class TaskService:
                 status_code=409,
                 details={"status": task["status"]},
             )
-        html_path = self.artifact_path(task_id, "html")
+        html_path = self.artifact_path(task_id, "html", task["workspaceId"])
         html_content = html_path.read_text(encoding="utf-8") if html_path.exists() else ""
         return {
             "success": True,
             "taskId": task_id,
-            "htmlPreviewUrl": f"/api/v1/report-tasks/{task_id}/exports/html",
+            "htmlPreviewUrl": f"/api/v1/report-tasks/{task_id}/exports/html?workspaceId={task['workspaceId']}",
             "htmlContent": html_content,
             "artifacts": task.get("artifacts", []),
         }
 
-    def artifact_path(self, task_id: str, report_format: str) -> Path:
+    def artifact_path(self, task_id: str, report_format: str, workspace_id: str | None = None) -> Path:
         if report_format not in REPORT_FORMATS:
             raise ApiError("VALIDATION_ERROR", "Unsupported report format", status_code=400)
         suffix = "json" if report_format == "json" else report_format
+        if workspace_id:
+            return self._report_task_workspace(workspace_id, task_id) / "report" / "exports" / f"{task_id}.{suffix}"
         return self.artifact_dir / f"{task_id}.{suffix}"
 
-    def _delete_report_artifacts(self, task_id: str) -> None:
+    def _delete_report_artifacts(self, task_id: str, workspace_id: str | None = None) -> None:
         for report_format in REPORT_FORMATS:
             path = self.artifact_path(task_id, report_format)
             if path.exists() and path.is_file():
                 path.unlink()
+        if workspace_id:
+            path = self._report_task_workspace(workspace_id, task_id)
+            if path.exists() and path.is_dir():
+                shutil.rmtree(path)
+            return
         workspace_root = self.artifact_dir / "workspaces"
         for path in workspace_root.glob(f"*/{task_id}"):
             if path.exists() and path.is_dir():
@@ -556,9 +565,9 @@ class TaskService:
             """
             UPDATE report_tasks
             SET status = 'running', progress = ?, stage = ?, updated_at = ?
-            WHERE workspace_id = ? AND id = ?
+            WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)
             """,
-            (progress, stage, now, workspace_id, task_id),
+            (progress, stage, now, task_id, workspace_id, workspace_id),
         )
         task = self.get_report_task(workspace_id, task_id)
         self.add_event(workspace_id, task_id, "report", "progress", {"task": task})
@@ -577,7 +586,7 @@ class TaskService:
         from config import reload_settings
 
         base_settings = reload_settings()
-        task_workspace = self._report_task_workspace(workspace_id, task_id)
+        task_workspace = self._report_task_workspace(task["workspaceId"], task_id)
         if orchestration_enabled:
             orchestration_reports, orchestration_forum_logs = self._run_report_orchestration(
                 workspace_id,
@@ -633,14 +642,16 @@ class TaskService:
         from ReportEngine.agent import ReportAgent
 
         report_config = self._task_engine_settings(base_settings, "report", task_workspace)
-        result = ReportAgent(config=report_config).generate_report(
-            query=task["topic"],
-            reports=reports,
-            forum_logs=forum_logs,
-            custom_template=custom_template,
-            save_report=True,
-            stream_handler=stream_handler,
-        )
+        report_config.REPORT_TASK_ID = task_id
+        with logger.contextualize(report_task_id=task_id):
+            result = ReportAgent(config=report_config).generate_report(
+                query=task["topic"],
+                reports=reports,
+                forum_logs=forum_logs,
+                custom_template=custom_template,
+                save_report=True,
+                stream_handler=stream_handler,
+            )
         if not isinstance(result, dict):
             raise RuntimeError("Report Engine returned an invalid result.")
         return result
@@ -935,6 +946,7 @@ class TaskService:
         config.OUTPUT_DIR = str(engine_dir)
         config.LOG_FILE = str(engine_dir / f"{engine_id}.log")
         if engine_id == "report":
+            config.LOG_FILE = str(engine_dir / "report_engine.log")
             config.CHAPTER_OUTPUT_DIR = str(engine_dir / "chapters")
             config.DOCUMENT_IR_OUTPUT_DIR = str(engine_dir / "document_ir")
             config.JSON_ERROR_LOG_DIR = str(engine_dir / "json_errors")
@@ -963,8 +975,8 @@ class TaskService:
         orchestration: dict[str, Any],
     ) -> None:
         row = self.store.query_one(
-            "SELECT source_scope_json FROM report_tasks WHERE workspace_id = ? AND id = ?",
-            (workspace_id, task_id),
+            "SELECT source_scope_json FROM report_tasks WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)",
+            (task_id, workspace_id, workspace_id),
         )
         if not row:
             return
@@ -974,9 +986,9 @@ class TaskService:
             """
             UPDATE report_tasks
             SET source_scope_json = ?, updated_at = ?
-            WHERE workspace_id = ? AND id = ?
+            WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)
             """,
-            (dumps(source_scope), utc_now(), workspace_id, task_id),
+            (dumps(source_scope), utc_now(), task_id, workspace_id, workspace_id),
         )
 
     def _apply_workspace_runtime_config(self, workspace_id: str) -> None:
@@ -1041,32 +1053,28 @@ class TaskService:
         safe_topic = slugify_filename(task["topic"], "report")
         formats = loads(
             self.store.query_one(
-                "SELECT output_formats_json FROM report_tasks WHERE workspace_id = ? AND id = ?",
-                (workspace_id, task_id),
+                "SELECT output_formats_json FROM report_tasks WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)",
+                (task_id, workspace_id, workspace_id),
             )["output_formats_json"],
             ["html"],
         )
         document_ir = self._load_document_ir(result.get("ir_filepath"))
-        export_dir = self._report_task_workspace(workspace_id, task_id) / "report" / "exports"
+        task_workspace_id = task["workspaceId"]
+        export_dir = self._report_task_workspace(task_workspace_id, task_id) / "report" / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
         artifacts = []
         for report_format in formats:
-            path = self.artifact_path(task_id, report_format)
-            suffix = "json" if report_format == "json" else report_format
-            workspace_path = export_dir / f"{task_id}.{suffix}"
+            path = self.artifact_path(task_id, report_format, task_workspace_id)
             if report_format == "html":
                 html_path = result.get("report_filepath")
                 if html_path and Path(html_path).exists():
-                    shutil.copyfile(html_path, path)
-                    if Path(html_path).resolve() != workspace_path.resolve():
-                        shutil.copyfile(html_path, workspace_path)
+                    if Path(html_path).resolve() != path.resolve():
+                        shutil.copyfile(html_path, path)
                 else:
-                    workspace_path.write_text(result.get("html_content", ""), encoding="utf-8")
-                    shutil.copyfile(workspace_path, path)
+                    path.write_text(result.get("html_content", ""), encoding="utf-8")
             elif report_format == "json":
                 content = document_ir if document_ir is not None else result
-                workspace_path.write_text(dumps(content), encoding="utf-8")
-                shutil.copyfile(workspace_path, path)
+                path.write_text(dumps(content), encoding="utf-8")
             elif report_format == "md":
                 if document_ir is None:
                     raise RuntimeError("Report Engine did not return Document IR for Markdown export.")
@@ -1076,27 +1084,25 @@ class TaskService:
                     document_ir,
                     ir_file_path=result.get("ir_filepath"),
                 )
-                workspace_path.write_text(markdown, encoding="utf-8")
-                shutil.copyfile(workspace_path, path)
+                path.write_text(markdown, encoding="utf-8")
             elif report_format == "pdf":
                 if document_ir is None:
                     raise RuntimeError("Report Engine did not return Document IR for PDF export.")
                 from ReportEngine.renderers import PDFRenderer
 
-                rendered_path = PDFRenderer().render_to_pdf(
+                PDFRenderer().render_to_pdf(
                     document_ir,
-                    workspace_path,
+                    path,
                     optimize_layout=True,
                     ir_file_path=result.get("ir_filepath"),
                 )
-                shutil.copyfile(Path(rendered_path or workspace_path), path)
             artifacts.append(
                 {
                     "format": report_format,
                     "ready": True,
                     "filename": f"{safe_topic}.{report_format}",
                     "sizeBytes": path.stat().st_size,
-                    "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{report_format}",
+                    "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/{report_format}?workspaceId={task_workspace_id}",
                 }
             )
         return artifacts
@@ -1122,9 +1128,9 @@ class TaskService:
             UPDATE report_tasks
             SET status = 'succeeded', progress = 100, stage = 'completed',
                 artifacts_json = ?, updated_at = ?
-            WHERE workspace_id = ? AND id = ?
+            WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)
             """,
-            (dumps(artifacts), now, workspace_id, task_id),
+            (dumps(artifacts), now, task_id, workspace_id, workspace_id),
         )
         task = self.get_report_task(workspace_id, task_id)
         self.add_event(workspace_id, task_id, "report", "completed", {"task": task})
@@ -1143,9 +1149,9 @@ class TaskService:
             UPDATE report_tasks
             SET status = 'failed', progress = 100, stage = 'failed',
                 error_json = ?, updated_at = ?
-            WHERE workspace_id = ? AND id = ?
+            WHERE id = ? AND (tenant_id = ? OR workspace_id = ?)
             """,
-            (dumps(error), now, workspace_id, task_id),
+            (dumps(error), now, task_id, workspace_id, workspace_id),
         )
         task = self.get_report_task(workspace_id, task_id)
         self.add_event(workspace_id, task_id, "report", "failed", {"task": task})
@@ -1549,7 +1555,7 @@ class TaskService:
             return ""
         template_name, template_content = read_report_template(self.repo_root, template_id)
         self.add_event(
-            task["workspaceId"],
+            task.get("tenantId") or task["workspaceId"],
             task["id"],
             "report",
             "stage",

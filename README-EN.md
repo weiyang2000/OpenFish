@@ -424,9 +424,12 @@ The local API base URL is `http://localhost:8000/api/v1`. Requests must include
 `X-Workspace-Id`, for example:
 
 ```bash
-curl -H "X-Workspace-Id: workspace_demo" \
+curl -H "X-Workspace-Id: workspace_console" \
   http://localhost:8000/api/v1/health
 ```
+
+Report tasks generate a dedicated artifact workspace when they are created;
+ReportEngine logs and export files are written under that task directory.
 
 Docker Compose enables real task workers by default: report tasks call
 ReportEngine, and crawler tasks call MindSpider/MediaCrawler. Configure LLM,

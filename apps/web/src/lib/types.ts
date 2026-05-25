@@ -93,6 +93,7 @@ export interface ReportArtifact {
 export interface ReportTask {
   id: string;
   workspaceId: string;
+  tenantId?: string;
   topic: string;
   status: Exclude<TaskStatus, "stopping" | "stopped">;
   progress: number;

@@ -46,6 +46,17 @@ CONFIG_KEYS = [
     "BOCHA_WEB_SEARCH_API_KEY",
     "ANSPIRE_BASE_URL",
     "ANSPIRE_API_KEY",
+    "SEARCH_TIMEOUT",
+    "DEFAULT_SEARCH_HOT_CONTENT_LIMIT",
+    "DEFAULT_SEARCH_TOPIC_GLOBALLY_LIMIT_PER_TABLE",
+    "DEFAULT_SEARCH_TOPIC_BY_DATE_LIMIT_PER_TABLE",
+    "DEFAULT_GET_COMMENTS_FOR_TOPIC_LIMIT",
+    "DEFAULT_SEARCH_TOPIC_ON_PLATFORM_LIMIT",
+    "MAX_SEARCH_RESULTS_FOR_LLM",
+    "MAX_HIGH_CONFIDENCE_SENTIMENT_RESULTS",
+    "MAX_REFLECTIONS",
+    "MAX_PARAGRAPHS",
+    "MAX_SEARCH_RESULTS",
 ]
 
 SEARCH_TOOL_OPTIONS = ["AnspireAPI", "BochaAPI"]
@@ -60,6 +71,8 @@ def config_group(key: str) -> str:
         return "server"
     if key.startswith("DB_"):
         return "database"
+    if key.startswith(("MAX_", "DEFAULT_")) or key in {"SEARCH_TIMEOUT", "SAVE_INTERMEDIATE_STATES"}:
+        return "engine"
     if "SEARCH" in key or key.startswith(("TAVILY", "BOCHA", "ANSPIRE")):
         return "search"
     if key.startswith("MINDSPIDER"):
@@ -174,4 +187,3 @@ class ConfigurationService:
         if value is None:
             return ""
         return str(value)
-

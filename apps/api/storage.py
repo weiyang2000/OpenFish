@@ -209,6 +209,18 @@ class Store:
             conn.executescript(SCHEMA_SQL)
             self._ensure_column(
                 conn,
+                "report_tasks",
+                "tenant_id",
+                "TEXT",
+            )
+            self._ensure_column(
+                conn,
+                "report_tasks",
+                "legacy_task_id",
+                "TEXT",
+            )
+            self._ensure_column(
+                conn,
                 "crawler_tasks",
                 "keywords_json",
                 "TEXT NOT NULL DEFAULT '[]'",

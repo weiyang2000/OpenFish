@@ -66,7 +66,31 @@ export const OPENAPI_PATHS = {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
-const workspaceId = process.env.NEXT_PUBLIC_WORKSPACE_ID ?? WORKSPACE_ID;
+const configuredWorkspaceId = process.env.NEXT_PUBLIC_WORKSPACE_ID?.trim();
+
+function createWorkspaceId(): string {
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const random =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().replace(/-/g, "").slice(0, 8)
+      : Math.random().toString(16).slice(2, 10);
+  return `workspace_${timestamp}_${random}`;
+}
+
+function resolveWorkspaceId(): string {
+  if (configuredWorkspaceId) return configuredWorkspaceId;
+  if (typeof window === "undefined") return WORKSPACE_ID;
+
+  const storageKey = "bettafish.workspaceId";
+  const existing = window.localStorage.getItem(storageKey);
+  if (existing) return existing;
+
+  const generated = createWorkspaceId();
+  window.localStorage.setItem(storageKey, generated);
+  return generated;
+}
+
+const workspaceId = resolveWorkspaceId();
 
 async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (USE_MOCKS || !API_BASE_URL) {

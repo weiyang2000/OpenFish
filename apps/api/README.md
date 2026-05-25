@@ -13,9 +13,12 @@ The versioned API base URL is `http://localhost:8000/api/v1`. Every SaaS
 request must include `X-Workspace-Id`, for example:
 
 ```bash
-curl -H "X-Workspace-Id: workspace_demo" \
+curl -H "X-Workspace-Id: workspace_console" \
   http://localhost:8000/api/v1/health
 ```
+
+Report tasks generate a separate artifact workspace id on creation. Engine logs,
+ReportEngine output, and export files are written under that task workspace.
 
 Docker Compose enables task workers by default. Report tasks call ReportEngine,
 and crawler tasks call the real MindSpider/MediaCrawler adapter. Missing LLM
