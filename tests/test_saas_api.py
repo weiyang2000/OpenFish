@@ -38,6 +38,9 @@ def test_system_components_do_not_expose_legacy_ui_ports(client: TestClient):
     components = {component["id"]: component for component in response.json()["components"]}
     for component_id in ("query", "media", "insight"):
         assert "port" not in components[component_id]
+        assert components[component_id]["status"] == "running"
+    assert components["forum"]["status"] == "running"
+    assert components["report"]["status"] == "running"
 
 
 def test_cors_preflight_allows_local_console_origin(client: TestClient):
@@ -470,7 +473,8 @@ def test_crawler_data_search_reads_crawler_tables(
             time INTEGER,
             add_ts INTEGER,
             liked_count TEXT,
-            comment_count TEXT
+            comment_count TEXT,
+            sentiment TEXT
         )
         """
     )
@@ -478,8 +482,8 @@ def test_crawler_data_search_reads_crawler_tables(
         """
         INSERT INTO xhs_note (
             note_id, title, desc, nickname, note_url, source_keyword,
-            time, add_ts, liked_count, comment_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            time, add_ts, liked_count, comment_count, sentiment
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "note_001",
@@ -492,6 +496,7 @@ def test_crawler_data_search_reads_crawler_tables(
             1760000100,
             "12",
             "3",
+            "正向",
         ),
     )
 
@@ -504,6 +509,7 @@ def test_crawler_data_search_reads_crawler_tables(
     assert body["summary"]["totalRecords"] == 1
     assert body["records"][0]["sourceId"] == "note_001"
     assert body["records"][0]["platformId"] == "xhs"
+    assert body["records"][0]["sentiment"] == "positive"
 
 
 def test_crawler_strategy_platform_policy_round_trip_and_invalid_platform(client: TestClient):
@@ -540,6 +546,21 @@ def test_crawler_strategy_platform_policy_round_trip_and_invalid_platform(client
 
 
 def test_report_task_basic_lifecycle_and_events(client: TestClient):
+    templates_response = client.get("/api/v1/report-templates", headers=WORKSPACE_HEADERS)
+    assert templates_response.status_code == 200
+    assert templates_response.json()["templates"][0]["id"] == "auto"
+
+    auto_response = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "自动模板选择验证",
+            "outputFormats": ["html"],
+        },
+    )
+    assert auto_response.status_code == 202
+    assert auto_response.json()["task"]["templateId"] == "auto"
+
     create_response = client.post(
         "/api/v1/report-tasks",
         headers=WORKSPACE_HEADERS,
@@ -590,6 +611,349 @@ def test_report_task_basic_lifecycle_and_events(client: TestClient):
     assert second_cancel.json()["error"]["code"] == "TASK_NOT_CANCELLABLE"
 
 
+def test_report_export_browser_url_and_task_delete(client: TestClient):
+    create_response = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "可下载报告",
+            "outputFormats": ["html", "pdf"],
+        },
+    )
+    assert create_response.status_code == 202
+    task_id = create_response.json()["task"]["id"]
+
+    task_service: TaskService = client.app.state.task_service
+    html_path = task_service.artifact_path(task_id, "html")
+    pdf_path = task_service.artifact_path(task_id, "pdf")
+    html_path.write_text("<!doctype html><h1>报告下载</h1>", encoding="utf-8")
+    pdf_path.write_bytes(b"%PDF-1.4\n%EOF\n")
+    task_service._complete_report_task(
+        WORKSPACE_HEADERS["X-Workspace-Id"],
+        task_id,
+        [
+            {
+                "format": "html",
+                "ready": True,
+                "filename": "report.html",
+                "sizeBytes": html_path.stat().st_size,
+                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/html",
+            },
+            {
+                "format": "pdf",
+                "ready": True,
+                "filename": "report.pdf",
+                "sizeBytes": pdf_path.stat().st_size,
+                "downloadUrl": f"/api/v1/report-tasks/{task_id}/exports/pdf",
+            },
+        ],
+    )
+
+    html_export = client.get(
+        f"/api/v1/report-tasks/{task_id}/exports/html?workspaceId={WORKSPACE_HEADERS['X-Workspace-Id']}"
+    )
+    assert html_export.status_code == 200
+    assert "text/html" in html_export.headers["content-type"]
+
+    pdf_export = client.get(
+        f"/api/v1/report-tasks/{task_id}/exports/pdf?workspaceId={WORKSPACE_HEADERS['X-Workspace-Id']}"
+    )
+    assert pdf_export.status_code == 200
+    assert "application/pdf" in pdf_export.headers["content-type"]
+
+    delete_response = client.delete(
+        f"/api/v1/report-tasks/{task_id}",
+        headers=WORKSPACE_HEADERS,
+    )
+    assert delete_response.status_code == 204
+    assert not html_path.exists()
+    assert not pdf_path.exists()
+    assert client.get(f"/api/v1/report-tasks/{task_id}", headers=WORKSPACE_HEADERS).status_code == 404
+    assert client.get(f"/api/v1/report-tasks/{task_id}/logs", headers=WORKSPACE_HEADERS).status_code == 404
+
+
+def test_report_worker_uses_topic_seed_when_inputs_are_empty(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+
+    class FakeReportAgent:
+        def __init__(self, config: Any = None):
+            captured["config"] = config
+
+        def generate_report(
+            self,
+            *,
+            query: str,
+            reports: list[str],
+            forum_logs: str,
+            custom_template: str,
+            save_report: bool,
+            stream_handler: Any,
+        ) -> dict[str, Any]:
+            captured["query"] = query
+            captured["reports"] = reports
+            captured["forum_logs"] = forum_logs
+            captured["custom_template"] = custom_template
+            captured["save_report"] = save_report
+            stream_handler("progress", {"progress": 35})
+            return {"html_content": "<!doctype html><h1>主题初稿</h1>"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ReportEngine.agent",
+        types.SimpleNamespace(
+            ReportAgent=FakeReportAgent,
+            create_agent=lambda *args, **kwargs: FakeReportAgent(*args, **kwargs),
+        ),
+    )
+    monkeypatch.setattr(TaskService, "_load_latest_engine_reports", staticmethod(lambda: []))
+    orchestration_calls: list[str] = []
+
+    def empty_orchestration(
+        self: TaskService,
+        workspace_id: str,
+        task: dict[str, Any],
+        task_workspace: Path,
+        base_settings: Any,
+    ) -> tuple[list[str], str]:
+        del self, workspace_id, task, base_settings
+        orchestration_calls.append(str(task_workspace))
+        return [], ""
+
+    monkeypatch.setattr(TaskService, "_run_report_orchestration", empty_orchestration)
+
+    config_response = client.patch(
+        "/api/v1/system/config",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "values": {
+                "REPORT_ENGINE_API_KEY": "sk-test-report",
+                "REPORT_ENGINE_BASE_URL": "https://example.test/v1",
+                "REPORT_ENGINE_MODEL_NAME": "test-report-model",
+            }
+        },
+    )
+    assert config_response.status_code == 200
+
+    create_response = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "COTY香水舆情分析",
+            "outputFormats": ["html"],
+        },
+    )
+    assert create_response.status_code == 202
+    task_id = create_response.json()["task"]["id"]
+
+    task_service: TaskService = client.app.state.task_service
+    task_service._run_report_worker(WORKSPACE_HEADERS["X-Workspace-Id"], task_id)
+
+    completed = task_service.get_report_task(WORKSPACE_HEADERS["X-Workspace-Id"], task_id)
+    assert completed["status"] == "succeeded"
+    assert captured["query"] == "COTY香水舆情分析"
+    assert orchestration_calls
+    assert task_id in orchestration_calls[0]
+    assert captured["config"].REPORT_ENGINE_API_KEY == "sk-test-report"
+    assert captured["config"].REPORT_ENGINE_MODEL_NAME == "test-report-model"
+    from ReportEngine.utils.config import settings as report_settings
+
+    assert report_settings.REPORT_ENGINE_API_KEY == "sk-test-report"
+    assert "COTY香水舆情分析" in captured["reports"][0]
+    assert "不要编造具体平台声量" in captured["reports"][0]
+
+    logs = client.get(f"/api/v1/report-tasks/{task_id}/logs", headers=WORKSPACE_HEADERS)
+    assert logs.status_code == 200
+    warning = [event for event in logs.json()["events"] if event["type"] == "warning"]
+    assert warning[0]["payload"]["payload"]["code"] == "NO_REPORT_INPUTS"
+
+
+def test_report_worker_orchestrates_pre_report_engines_before_report(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+
+    class FakeReportAgent:
+        def __init__(self, config: Any = None):
+            captured["report_config"] = config
+
+        def generate_report(
+            self,
+            *,
+            query: str,
+            reports: list[str],
+            forum_logs: str,
+            custom_template: str,
+            save_report: bool,
+            stream_handler: Any,
+        ) -> dict[str, Any]:
+            captured["query"] = query
+            captured["reports"] = reports
+            captured["forum_logs"] = forum_logs
+            captured["custom_template"] = custom_template
+            captured["save_report"] = save_report
+            stream_handler("progress", {"progress": 90})
+            return {"html_content": "<!doctype html><h1>多引擎报告</h1>"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "ReportEngine.agent",
+        types.SimpleNamespace(
+            ReportAgent=FakeReportAgent,
+            create_agent=lambda *args, **kwargs: FakeReportAgent(*args, **kwargs),
+        ),
+    )
+
+    def fake_pre_engine(
+        self: TaskService,
+        engine_id: str,
+        topic: str,
+        task_workspace: Path,
+        base_settings: Any,
+        task_id: str,
+    ) -> dict[str, Any]:
+        del self, base_settings
+        captured.setdefault("call_order", []).append(f"{engine_id}_after_{captured.get('forum_started')}")
+        artifact_path = task_workspace / engine_id / f"{engine_id}_report.md"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        report = f"{engine_id} report for {topic}"
+        artifact_path.write_text(report, encoding="utf-8")
+        return {
+            "engine": engine_id,
+            "status": "succeeded",
+            "report": report,
+            "artifactPath": str(artifact_path),
+            "startedAt": "2026-05-25T04:30:00Z",
+            "completedAt": "2026-05-25T04:31:00Z",
+        }
+
+    monkeypatch.setattr(TaskService, "_run_pre_report_engine", fake_pre_engine)
+
+    class FakeForumMonitor:
+        def __init__(self, forum_path: Path):
+            self.forum_log_file = forum_path
+
+    def fake_start_forum_monitor(
+        self: TaskService,
+        workspace_id: str,
+        task_id: str,
+        task_workspace: Path,
+    ) -> FakeForumMonitor:
+        captured["forum_started"] = True
+        forum_path = task_workspace / "forum" / "forum.log"
+        forum_path.parent.mkdir(parents=True, exist_ok=True)
+        self.add_event(
+            workspace_id,
+            task_id,
+            "report",
+            "orchestration",
+            {
+                "payload": {
+                    "stage": "forum_monitor_started",
+                    "engine": "forum",
+                    "status": "running",
+                    "artifactPath": str(forum_path),
+                }
+            },
+        )
+        return FakeForumMonitor(forum_path)
+
+    def fake_stop_forum_monitor(
+        self: TaskService,
+        workspace_id: str,
+        task_id: str,
+        monitor: FakeForumMonitor,
+    ) -> str:
+        forum_logs = "\n".join(
+            [
+                "[04:30:00] [QUERY] query report for COTY香水舆情分析",
+                "[04:30:00] [MEDIA] media report for COTY香水舆情分析",
+                "[04:30:00] [INSIGHT] insight report for COTY香水舆情分析",
+                f"[04:30:00] [HOST] host summary for {task_id}",
+            ]
+        )
+        monitor.forum_log_file.write_text(forum_logs, encoding="utf-8")
+        self.add_event(
+            workspace_id,
+            task_id,
+            "report",
+            "orchestration",
+            {
+                "payload": {
+                    "stage": "forum_monitor_stopped",
+                    "engine": "forum",
+                    "status": "succeeded",
+                    "artifactPath": str(monitor.forum_log_file),
+                }
+            },
+        )
+        return forum_logs
+
+    monkeypatch.setattr(TaskService, "_start_report_forum_monitor", fake_start_forum_monitor)
+    monkeypatch.setattr(TaskService, "_stop_report_forum_monitor", fake_stop_forum_monitor)
+
+    config_response = client.patch(
+        "/api/v1/system/config",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "values": {
+                "REPORT_ENGINE_API_KEY": "sk-test-report",
+                "REPORT_ENGINE_BASE_URL": "https://example.test/v1",
+                "REPORT_ENGINE_MODEL_NAME": "test-report-model",
+            }
+        },
+    )
+    assert config_response.status_code == 200
+
+    create_response = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "COTY香水舆情分析",
+            "outputFormats": ["html"],
+        },
+    )
+    assert create_response.status_code == 202
+    task_id = create_response.json()["task"]["id"]
+
+    task_service: TaskService = client.app.state.task_service
+    task_service._run_report_worker(WORKSPACE_HEADERS["X-Workspace-Id"], task_id)
+
+    completed = task_service.get_report_task(WORKSPACE_HEADERS["X-Workspace-Id"], task_id)
+    assert completed["status"] == "succeeded"
+    assert captured["query"] == "COTY香水舆情分析"
+    assert captured["reports"] == [
+        "query report for COTY香水舆情分析",
+        "media report for COTY香水舆情分析",
+        "insight report for COTY香水舆情分析",
+    ]
+    assert "[HOST]" in captured["forum_logs"]
+    assert captured["call_order"]
+    assert all(item.endswith("_after_True") for item in captured["call_order"])
+    assert task_id in captured["report_config"].OUTPUT_DIR
+
+    orchestration = completed["sourceScope"]["orchestration"]
+    assert orchestration["status"] == "succeeded"
+    assert task_id in orchestration["workspacePath"]
+    for engine_id in ("query", "media", "insight"):
+        assert orchestration["engines"][engine_id]["status"] == "succeeded"
+        assert Path(orchestration["engines"][engine_id]["artifactPath"]).exists()
+
+    logs = client.get(f"/api/v1/report-tasks/{task_id}/logs", headers=WORKSPACE_HEADERS)
+    assert logs.status_code == 200
+    stages = [
+        event["payload"]["payload"].get("stage")
+        for event in logs.json()["events"]
+        if event["type"] == "orchestration"
+    ]
+    assert "workspace_ready" in stages
+    assert "forum_monitor_started" in stages
+    assert "forum_monitor_stopped" in stages
+
+
 def test_crawler_task_stop_retry_and_conflict(client: TestClient):
     create_response = client.post(
         "/api/v1/crawler-tasks",
@@ -607,6 +971,9 @@ def test_crawler_task_stop_retry_and_conflict(client: TestClient):
     task_id = task["id"]
     assert task["keywords"] == ["养老服务", "医保支付"]
     assert task["keywordSource"] == "manual"
+    assert task["startDate"] == "2026-05-22"
+    assert task["endDate"] == "2026-05-22"
+    assert task["schedule"]["mode"] == "manual"
 
     log_response = client.get(
         f"/api/v1/crawler-tasks/{task_id}/logs",
@@ -638,6 +1005,84 @@ def test_crawler_task_stop_retry_and_conflict(client: TestClient):
     )
     assert conflict_response.status_code == 409
     assert conflict_response.json()["error"]["code"] == "CONFLICT"
+
+
+def test_crawler_task_delete_removes_task_and_logs(client: TestClient):
+    create_response = client.post(
+        "/api/v1/crawler-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "runMode": "deep_sentiment",
+            "targetDate": "2026-05-22",
+            "platforms": ["wb"],
+            "keywords": ["养老服务"],
+            "keywordSource": "manual",
+        },
+    )
+    assert create_response.status_code == 202
+    task_id = create_response.json()["task"]["id"]
+
+    delete_response = client.delete(
+        f"/api/v1/crawler-tasks/{task_id}",
+        headers=WORKSPACE_HEADERS,
+    )
+    assert delete_response.status_code == 204
+    assert client.get(f"/api/v1/crawler-tasks/{task_id}", headers=WORKSPACE_HEADERS).status_code == 404
+    assert client.get(f"/api/v1/crawler-tasks/{task_id}/logs", headers=WORKSPACE_HEADERS).status_code == 404
+
+
+def test_crawler_task_date_range_and_schedule(client: TestClient):
+    create_response = client.post(
+        "/api/v1/crawler-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "runMode": "deep_sentiment",
+            "startDate": "2026-05-20",
+            "endDate": "2026-05-25",
+            "schedule": {"mode": "daily", "timezone": "Asia/Shanghai"},
+            "platforms": ["wb"],
+            "keywords": ["养老服务"],
+            "keywordSource": "manual",
+        },
+    )
+    assert create_response.status_code == 202
+    task = create_response.json()["task"]
+    assert task["status"] == "pending"
+    assert task["targetDate"] == "2026-05-20"
+    assert task["startDate"] == "2026-05-20"
+    assert task["endDate"] == "2026-05-25"
+    assert task["schedule"]["mode"] == "daily"
+
+    invalid_range = client.post(
+        "/api/v1/crawler-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "runMode": "deep_sentiment",
+            "startDate": "2026-05-25",
+            "endDate": "2026-05-20",
+            "platforms": ["wb"],
+            "keywords": ["养老服务"],
+            "keywordSource": "manual",
+        },
+    )
+    assert invalid_range.status_code == 422
+    assert invalid_range.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    invalid_cron = client.post(
+        "/api/v1/crawler-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "runMode": "deep_sentiment",
+            "startDate": "2026-05-20",
+            "endDate": "2026-05-25",
+            "schedule": {"mode": "cron", "timezone": "Asia/Shanghai"},
+            "platforms": ["wb"],
+            "keywords": ["养老服务"],
+            "keywordSource": "manual",
+        },
+    )
+    assert invalid_cron.status_code == 422
+    assert invalid_cron.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 def test_crawler_task_platform_filter_applies_before_pagination(client: TestClient):

@@ -5,6 +5,10 @@ services:
       args:
         DEBIAN_APT_MIRROR: ${DEBIAN_APT_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian}
         DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/debian-security}
+        PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PYPI_EXTRA_INDEX_URLS: ${PYPI_EXTRA_INDEX_URLS:-}
+        BETTAFISH_TORCH_VARIANT: ${BETTAFISH_TORCH_VARIANT:-auto}
+        PYTORCH_CUDA_INDEX_URL: ${PYTORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu128}
     container_name: bettafish-api
     restart: unless-stopped
     depends_on:
@@ -39,6 +43,7 @@ services:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
         NEXT_PUBLIC_USE_MOCKS: ${NEXT_PUBLIC_USE_MOCKS:-false}
         NEXT_PUBLIC_WORKSPACE_ID: ${NEXT_PUBLIC_WORKSPACE_ID:-workspace_demo}
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
     container_name: bettafish-web
     restart: unless-stopped
     depends_on:

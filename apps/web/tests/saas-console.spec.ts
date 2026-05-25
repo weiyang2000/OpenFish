@@ -35,6 +35,9 @@ test("validates and creates a report task", async ({ page }) => {
   await page.getByRole("button", { name: "创建报告" }).click();
   await expect(page.getByText("报告主题不能为空")).toBeVisible();
 
+  await expect(page.getByLabel("模板")).toHaveValue("auto");
+  await expect(page.getByRole("option", { name: "自动选择" })).toBeAttached();
+
   await page.getByPlaceholder("输入报告主题").fill("BET-5 前端报告任务");
   await page.getByRole("button", { name: "创建报告" }).click();
 
@@ -61,9 +64,26 @@ test("validates crawler platform selection and creates a crawler task", async ({
   await expect(page.getByText("至少输入一个关键词")).toBeVisible();
 
   await page.getByPlaceholder("每行一个关键词").fill("养老服务\n医保支付");
+  await expect(page.getByLabel("开始日期")).toHaveValue("2026-05-22");
+  await expect(page.getByLabel("结束日期")).toHaveValue("2026-05-25");
+  await expect(page.getByLabel("定时")).toHaveValue("manual");
   await page.getByRole("button", { name: "创建任务" }).click();
   await expect(page.getByText("爬虫任务已创建")).toBeVisible();
   await expect(page.getByText("养老服务 / 医保支付", { exact: true })).toBeVisible();
+});
+
+test("deletes report and crawler tasks", async ({ page }) => {
+  await openConsole(page);
+
+  await page.getByRole("button", { name: "报告" }).click();
+  await page.locator(".task-row", { hasText: "养老服务发展趋势" }).getByTitle("删除报告任务").click();
+  await expect(page.getByText("报告任务已删除")).toBeVisible();
+  await expect(page.locator(".task-row", { hasText: "养老服务发展趋势" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "爬虫" }).click();
+  await page.locator(".task-row", { hasText: "养老服务 / 医保支付 / 养老院" }).getByTitle("删除爬虫任务").click();
+  await expect(page.getByText("爬虫任务已删除")).toBeVisible();
+  await expect(page.locator(".task-row", { hasText: "养老服务 / 医保支付 / 养老院" })).toHaveCount(0);
 });
 
 test("filters crawler accounts by platform and status with empty state", async ({ page }) => {
@@ -102,11 +122,13 @@ test("searches crawler database records", async ({ page }) => {
 
   await expect(page.getByRole("heading", { name: "爬取数据库" })).toBeVisible();
   await expect(page.getByText("社区养老服务体验")).toBeVisible();
+  await expect(page.getByText("正向").first()).toBeVisible();
   await page.getByLabel("类型").selectOption("comment");
   await page.getByPlaceholder("标题、正文、作者、关键词").fill("助餐");
   await page.getByRole("button", { name: "检索" }).click();
 
   await expect(page.getByText("希望社区能把助餐和康复服务放在一起")).toBeVisible();
+  await expect(page.getByText("正向")).toHaveCount(1);
   await expect(page.getByText("社区养老服务体验")).toHaveCount(0);
 });
 

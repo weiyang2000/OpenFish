@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from datetime import date
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 PLATFORM_IDS = ("xhs", "dy", "ks", "bili", "wb", "tieba", "zhihu")
@@ -59,11 +61,28 @@ class SearchRunRequest(BaseModel):
         return value
 
 
+class ReportOrchestrationScope(BaseModel):
+    enabled: bool = True
+    engines: list[Literal["query", "media", "insight"]] = Field(
+        default_factory=lambda: ["query", "media", "insight"]
+    )
+
+    @field_validator("engines")
+    @classmethod
+    def validate_report_engines(cls, value: list[str]) -> list[str]:
+        allowed = {"query", "media", "insight"}
+        invalid = sorted(set(value) - allowed)
+        if invalid:
+            raise ValueError(f"unsupported report orchestration engines: {', '.join(invalid)}")
+        return list(dict.fromkeys(value))
+
+
 class ReportSourceScope(BaseModel):
     searchRunId: str | None = None
     crawlerTaskIds: list[str] = Field(default_factory=list)
     includeForumLog: bool = True
     inputFileRefs: list[str] = Field(default_factory=list)
+    orchestration: ReportOrchestrationScope = Field(default_factory=ReportOrchestrationScope)
 
 
 class CreateReportTaskRequest(BaseModel):
@@ -88,6 +107,12 @@ class CrawlFrequency(BaseModel):
     mode: Literal["manual", "hourly", "daily", "weekly", "cron"] = "manual"
     cron: str | None = None
     timezone: str = "Asia/Shanghai"
+
+    @model_validator(mode="after")
+    def validate_cron(self) -> "CrawlFrequency":
+        if self.mode == "cron" and not (self.cron or "").strip():
+            raise ValueError("cron expression is required when schedule mode is cron")
+        return self
 
 
 class PlatformPolicyInput(BaseModel):
@@ -139,6 +164,9 @@ class CreateCrawlerTaskRequest(BaseModel):
     strategyId: str | None = None
     runMode: Literal["topic_extraction", "deep_sentiment", "full_workflow"]
     targetDate: str | None = None
+    startDate: str | None = None
+    endDate: str | None = None
+    schedule: CrawlFrequency = Field(default_factory=CrawlFrequency)
     platforms: list[str] = Field(min_length=1)
     keywords: list[str] = Field(min_length=1, max_length=500)
     keywordSource: Literal["manual"]
@@ -164,6 +192,26 @@ class CreateCrawlerTaskRequest(BaseModel):
         if not normalized:
             raise ValueError("at least one keyword is required")
         return list(dict.fromkeys(normalized))
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "CreateCrawlerTaskRequest":
+        if (self.startDate and not self.endDate) or (self.endDate and not self.startDate):
+            raise ValueError("startDate and endDate must be provided together")
+
+        start = self._parse_date(self.startDate or self.targetDate, "startDate")
+        end = self._parse_date(self.endDate or self.targetDate, "endDate")
+        if start and end and start > end:
+            raise ValueError("endDate must be greater than or equal to startDate")
+        return self
+
+    @staticmethod
+    def _parse_date(value: str | None, field_name: str) -> date | None:
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must use YYYY-MM-DD format") from exc
 
 
 class CrawlerAccountUpsertRequest(BaseModel):

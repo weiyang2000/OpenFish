@@ -81,12 +81,14 @@ def test_runtime_openapi_exposes_key_contract_operations(client: TestClient):
         "/api/v1/system/config",
         "/api/v1/report-tasks",
         "/api/v1/report-tasks/{task_id}/logs",
+        "/api/v1/report-tasks/{task_id}",
         "/api/v1/report-tasks/{task_id}:cancel",
         "/api/v1/crawler-accounts",
         "/api/v1/crawler-accounts/login-sessions",
         "/api/v1/crawler-data",
         "/api/v1/crawler-accounts/{accountId}",
         "/api/v1/crawler-tasks/{task_id}/logs",
+        "/api/v1/crawler-tasks/{task_id}",
         "/api/v1/crawler-tasks/{task_id}:retry",
         "/api/v1/platforms/{platform_id}/identity-lists",
     ]
@@ -273,7 +275,9 @@ def test_real_workers_persist_report_and_crawler_main_flows(
         headers=WORKSPACE_HEADERS,
         json={
             "runMode": "full_workflow",
-            "targetDate": "2026-05-22",
+            "startDate": "2026-05-20",
+            "endDate": "2026-05-22",
+            "schedule": {"mode": "manual", "timezone": "Asia/Shanghai"},
             "platforms": ["wb", "xhs"],
             "keywords": ["养老服务", "医保支付"],
             "keywordSource": "manual",
@@ -288,6 +292,9 @@ def test_real_workers_persist_report_and_crawler_main_flows(
         "succeeded",
     )
     assert completed_crawler["progress"] == 100
+    assert completed_crawler["startDate"] == "2026-05-20"
+    assert completed_crawler["endDate"] == "2026-05-22"
+    assert completed_crawler["schedule"]["mode"] == "manual"
     assert completed_crawler["keywords"] == ["养老服务", "医保支付"]
     assert completed_crawler["keywordSource"] == "manual"
     assert completed_crawler["stats"]["totalKeywords"] == 2

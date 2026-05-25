@@ -48,6 +48,8 @@ export type CrawlerAccountStatus =
 
 export type CrawlerLoginType = "qrcode" | "phone" | "cookie";
 
+export type CrawlerSentiment = "positive" | "neutral" | "negative" | "unknown";
+
 export type LogLevel = "debug" | "info" | "warning" | "error" | "critical";
 
 export type LogSource =
@@ -98,6 +100,8 @@ export interface ReportTask {
     | "queued"
     | "prepare"
     | "io_ready"
+    | "orchestrating"
+    | "forum_running"
     | "data_loaded"
     | "agent_running"
     | "retry_wait"
@@ -105,6 +109,22 @@ export interface ReportTask {
     | "completed"
     | "failed";
   templateId?: string;
+  sourceScope?: {
+    searchRunId?: string | null;
+    crawlerTaskIds?: string[];
+    includeForumLog?: boolean;
+    inputFileRefs?: string[];
+    orchestration?: {
+      enabled?: boolean;
+      mode?: string;
+      status?: string;
+      workspacePath?: string;
+      engines?: Record<string, Record<string, string | undefined>>;
+      forum?: Record<string, string | undefined>;
+      startedAt?: string;
+      completedAt?: string;
+    };
+  };
   artifacts: ReportArtifact[];
   owner?: UserRef;
   createdAt: string;
@@ -130,6 +150,9 @@ export interface CrawlerTask {
   progress: number;
   strategyId?: string;
   targetDate?: string;
+  startDate?: string;
+  endDate?: string;
+  schedule?: CrawlFrequency;
   platforms: PlatformId[];
   keywords: string[];
   keywordSource: CrawlerTaskKeywordSource;
@@ -308,6 +331,7 @@ export interface CrawlerDataRecord {
   url?: string;
   createdAt?: string | number;
   scrapedAt?: string | number;
+  sentiment?: CrawlerSentiment;
   metrics?: {
     likes?: string | number;
     comments?: string | number;
@@ -353,7 +377,10 @@ export interface CreateReportTaskInput {
 export interface CreateCrawlerTaskInput {
   strategyId?: string;
   runMode: RunMode;
-  targetDate: string;
+  targetDate?: string;
+  startDate?: string;
+  endDate?: string;
+  schedule?: CrawlFrequency;
   platforms: PlatformId[];
   keywords: string[];
   keywordSource: CrawlerTaskKeywordSource;

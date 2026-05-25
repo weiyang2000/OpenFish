@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shutil
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from apps.api.schemas import (
     ApiError,
@@ -18,6 +23,7 @@ from apps.api.schemas import (
     UserRef,
 )
 from apps.api.services.common import new_id, slugify_filename, utc_now
+from apps.api.services.report_templates import AUTO_REPORT_TEMPLATE_ID, read_report_template
 from apps.api.storage import Store, dumps, loads
 
 
@@ -30,13 +36,28 @@ ENGINE_REPORT_DIRS = {
     "media": Path("engine_reports/media"),
     "query": Path("engine_reports/query"),
 }
+REPORT_ORCHESTRATION_ENGINES = ("query", "media", "insight")
+ENGINE_DISPLAY_NAMES = {
+    "query": "Query Engine",
+    "media": "Media Engine",
+    "insight": "Insight Engine",
+    "forum": "Forum Engine",
+    "report": "Report Engine",
+}
 
 
 class TaskService:
-    def __init__(self, store: Store, artifact_dir: Path, run_workers: bool = False):
+    def __init__(
+        self,
+        store: Store,
+        artifact_dir: Path,
+        run_workers: bool = False,
+        repo_root: Path | None = None,
+    ):
         self.store = store
         self.artifact_dir = artifact_dir
         self.run_workers = run_workers
+        self.repo_root = Path(repo_root or Path.cwd())
         self.artifact_dir.mkdir(parents=True, exist_ok=True)
         self._repair_interrupted_crawler_tasks()
         self._repair_inconsistent_crawler_task_statuses()
@@ -84,6 +105,7 @@ class TaskService:
         task_id = new_id("report")
         now = utc_now()
         formats = payload.outputFormats or ["html"]
+        template_id = self._normalize_report_template_id(payload.templateId)
         artifacts = [
             {
                 "format": item,
@@ -107,7 +129,7 @@ class TaskService:
                 "queued",
                 0,
                 "queued",
-                payload.templateId,
+                template_id,
                 dumps(self._report_source_scope(payload)),
                 dumps(formats),
                 dumps(artifacts),
@@ -188,6 +210,24 @@ class TaskService:
         self.add_event(workspace_id, task_id, "report", "cancelled", {"task": task})
         return task
 
+    def delete_report_task(self, workspace_id: str, task_id: str) -> None:
+        task = self.get_report_task(workspace_id, task_id)
+        if task["status"] in {"pending", "running"}:
+            raise ApiError(
+                "CONFLICT",
+                "Report task is still running. Cancel it before deleting.",
+                status_code=409,
+            )
+        self._delete_report_artifacts(task_id)
+        self.store.execute(
+            "DELETE FROM task_events WHERE workspace_id = ? AND task_id = ? AND task_type = 'report'",
+            (workspace_id, task_id),
+        )
+        self.store.execute(
+            "DELETE FROM report_tasks WHERE workspace_id = ? AND id = ?",
+            (workspace_id, task_id),
+        )
+
     def get_report_result(self, workspace_id: str, task_id: str) -> dict[str, Any]:
         task = self.get_report_task(workspace_id, task_id)
         if task["status"] != "succeeded":
@@ -212,6 +252,16 @@ class TaskService:
             raise ApiError("VALIDATION_ERROR", "Unsupported report format", status_code=400)
         suffix = "json" if report_format == "json" else report_format
         return self.artifact_dir / f"{task_id}.{suffix}"
+
+    def _delete_report_artifacts(self, task_id: str) -> None:
+        for report_format in REPORT_FORMATS:
+            path = self.artifact_path(task_id, report_format)
+            if path.exists() and path.is_file():
+                path.unlink()
+        workspace_root = self.artifact_dir / "workspaces"
+        for path in workspace_root.glob(f"*/{task_id}"):
+            if path.exists() and path.is_dir():
+                shutil.rmtree(path)
 
     def add_event(
         self,
@@ -318,22 +368,29 @@ class TaskService:
             "totalComments": 0,
             "platformSummary": {},
         }
+        start_date, end_date = self._crawler_date_range(payload)
+        schedule = payload.schedule.model_dump(mode="json")
+        initial_status = "pending" if schedule.get("mode") != "manual" else "queued"
         self.store.execute(
             """
             INSERT INTO crawler_tasks (
                 id, workspace_id, strategy_id, run_mode, target_date,
+                start_date, end_date, schedule_json,
                 platforms_json, keywords_json, keyword_source,
                 max_notes_per_keyword, max_comments_per_note, login_type,
                 headless, overrides_json, status, progress, stats_json,
                 owner_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
                 workspace_id,
                 payload.strategyId,
                 payload.runMode,
-                payload.targetDate,
+                payload.targetDate or start_date,
+                start_date,
+                end_date,
+                dumps(schedule),
                 dumps(payload.platforms),
                 dumps(payload.keywords),
                 payload.keywordSource,
@@ -346,7 +403,7 @@ class TaskService:
                 payload.loginType,
                 1 if payload.headless is not False else 0,
                 dumps([item.model_dump(mode="json") for item in payload.overrides]),
-                "queued",
+                initial_status,
                 0,
                 dumps(stats),
                 self._user_json(payload.owner),
@@ -356,7 +413,7 @@ class TaskService:
         )
         task = self.get_crawler_task(workspace_id, task_id)
         self.add_event(workspace_id, task_id, "crawler", "status", {"task": task})
-        if self.run_workers:
+        if self.run_workers and initial_status == "queued":
             threading.Thread(
                 target=self._run_crawler_worker,
                 args=(workspace_id, task_id),
@@ -457,6 +514,23 @@ class TaskService:
             ).start()
         return task
 
+    def delete_crawler_task(self, workspace_id: str, task_id: str) -> None:
+        task = self.get_crawler_task(workspace_id, task_id)
+        if task["status"] in {"running", "stopping"}:
+            raise ApiError(
+                "CONFLICT",
+                "Crawler task is still running. Stop it before deleting.",
+                status_code=409,
+            )
+        self.store.execute(
+            "DELETE FROM task_events WHERE workspace_id = ? AND task_id = ? AND task_type = 'crawler'",
+            (workspace_id, task_id),
+        )
+        self.store.execute(
+            "DELETE FROM crawler_tasks WHERE workspace_id = ? AND id = ?",
+            (workspace_id, task_id),
+        )
+
     def _run_report_worker(self, workspace_id: str, task_id: str) -> None:
         try:
             if self.get_report_task(workspace_id, task_id)["status"] == "cancelled":
@@ -491,16 +565,51 @@ class TaskService:
 
     def _run_real_report(self, workspace_id: str, task_id: str) -> dict[str, Any]:
         task = self.get_report_task(workspace_id, task_id)
-        reports, forum_logs = self._load_report_inputs(task)
+        source_scope = task.get("sourceScope", {})
+        orchestration_enabled = self._report_orchestration_enabled(source_scope)
+        reports, forum_logs = self._load_report_inputs(
+            task,
+            include_latest=not orchestration_enabled,
+            include_global_forum=not orchestration_enabled,
+        )
+
+        self._apply_workspace_runtime_config(workspace_id)
+        from config import reload_settings
+
+        base_settings = reload_settings()
+        task_workspace = self._report_task_workspace(workspace_id, task_id)
+        if orchestration_enabled:
+            orchestration_reports, orchestration_forum_logs = self._run_report_orchestration(
+                workspace_id,
+                task,
+                task_workspace,
+                base_settings,
+            )
+            reports.extend(orchestration_reports)
+            if orchestration_forum_logs:
+                forum_logs = "\n".join(part for part in (forum_logs, orchestration_forum_logs) if part).strip()
+
         if not reports:
-            raise RuntimeError(
-                "No engine report inputs are available. Run Query/Media/Insight engines first "
-                "or submit sourceScope.inputFileRefs."
+            reports = [self._topic_only_report_seed(task)]
+            self.add_event(
+                workspace_id,
+                task_id,
+                "report",
+                "warning",
+                {
+                    "payload": {
+                        "code": "NO_REPORT_INPUTS",
+                        "message": (
+                            "No Query/Media/Insight report inputs were found. "
+                            "Generated a topic-only draft input instead."
+                        ),
+                    }
+                },
             )
 
-        from ReportEngine.agent import ReportAgent
-
-        source_scope = task.get("sourceScope", {})
+        custom_template = source_scope.get("customTemplate", "")
+        if not custom_template:
+            custom_template = self._load_manual_report_template(task)
 
         def stream_handler(event_type: str, payload: dict[str, Any]) -> None:
             if event_type == "progress" and "progress" in payload:
@@ -520,12 +629,15 @@ class TaskService:
                     {"payload": payload},
                 )
 
-        self._mark_report_running(workspace_id, task_id, 20, "agent_running")
-        result = ReportAgent().generate_report(
+        self._mark_report_running(workspace_id, task_id, 80, "agent_running")
+        from ReportEngine.agent import ReportAgent
+
+        report_config = self._task_engine_settings(base_settings, "report", task_workspace)
+        result = ReportAgent(config=report_config).generate_report(
             query=task["topic"],
             reports=reports,
             forum_logs=forum_logs,
-            custom_template=source_scope.get("customTemplate", ""),
+            custom_template=custom_template,
             save_report=True,
             stream_handler=stream_handler,
         )
@@ -533,21 +645,350 @@ class TaskService:
             raise RuntimeError("Report Engine returned an invalid result.")
         return result
 
-    def _load_report_inputs(self, task: dict[str, Any]) -> tuple[list[str], str]:
+    def _load_report_inputs(
+        self,
+        task: dict[str, Any],
+        *,
+        include_latest: bool = True,
+        include_global_forum: bool = True,
+    ) -> tuple[list[str], str]:
         source_scope = task.get("sourceScope", {})
         input_refs = source_scope.get("inputFileRefs") or []
         reports = [self._read_required_text(Path(ref)) for ref in input_refs]
 
-        if not reports:
+        if include_latest and not reports:
             reports = self._load_latest_engine_reports()
 
         forum_logs = ""
-        if source_scope.get("includeForumLog", True):
+        if include_global_forum and source_scope.get("includeForumLog", True):
             forum_log_path = Path("logs/forum.log")
             if forum_log_path.exists():
                 forum_logs = forum_log_path.read_text(encoding="utf-8", errors="replace")
 
         return reports, forum_logs
+
+    def _run_report_orchestration(
+        self,
+        workspace_id: str,
+        task: dict[str, Any],
+        task_workspace: Path,
+        base_settings: Any,
+    ) -> tuple[list[str], str]:
+        task_id = task["id"]
+        task_workspace.mkdir(parents=True, exist_ok=True)
+        engine_ids = self._report_orchestration_engines(task.get("sourceScope", {}))
+        started_at = utc_now()
+        orchestration_meta: dict[str, Any] = {
+            "enabled": True,
+            "mode": "multi_engine",
+            "status": "running",
+            "workspacePath": str(task_workspace),
+            "engines": {
+                engine_id: {
+                    "status": "queued",
+                    "artifactPath": str(task_workspace / engine_id / f"{engine_id}_report.md"),
+                }
+                for engine_id in engine_ids
+            },
+            "forum": {
+                "status": "queued",
+                "artifactPath": str(task_workspace / "forum" / "forum.log"),
+            },
+            "startedAt": started_at,
+        }
+        self._update_report_orchestration(workspace_id, task_id, orchestration_meta)
+        self._mark_report_running(workspace_id, task_id, 15, "orchestrating")
+        forum_monitor = self._start_report_forum_monitor(workspace_id, task_id, task_workspace)
+        self.add_event(
+            workspace_id,
+            task_id,
+            "report",
+            "orchestration",
+            {
+                "payload": {
+                    "stage": "workspace_ready",
+                    "workspacePath": str(task_workspace),
+                    "engines": list(engine_ids),
+                }
+            },
+        )
+
+        engine_results: dict[str, dict[str, Any]] = {}
+        forum_logs = ""
+        try:
+            with ThreadPoolExecutor(max_workers=max(1, len(engine_ids))) as executor:
+                futures = {
+                    executor.submit(
+                        self._run_pre_report_engine,
+                        engine_id,
+                        task["topic"],
+                        task_workspace,
+                        base_settings,
+                        task_id,
+                    ): engine_id
+                    for engine_id in engine_ids
+                }
+                completed_count = 0
+                for future in as_completed(futures):
+                    engine_id = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        result = {
+                            "engine": engine_id,
+                            "status": "failed",
+                            "error": str(exc),
+                            "completedAt": utc_now(),
+                        }
+                    engine_results[engine_id] = result
+                    completed_count += 1
+                    orchestration_meta["engines"][engine_id].update(
+                        {
+                            "status": result["status"],
+                            "startedAt": result.get("startedAt"),
+                            "completedAt": result.get("completedAt"),
+                        }
+                    )
+                    if result.get("artifactPath"):
+                        orchestration_meta["engines"][engine_id]["artifactPath"] = result["artifactPath"]
+                    if result.get("error"):
+                        orchestration_meta["engines"][engine_id]["error"] = result["error"]
+                    self._update_report_orchestration(workspace_id, task_id, orchestration_meta)
+                    self.add_event(
+                        workspace_id,
+                        task_id,
+                        "report",
+                        "orchestration",
+                        {
+                            "payload": {
+                                "stage": f"{engine_id}_{result['status']}",
+                                "engine": engine_id,
+                                "status": result["status"],
+                                "artifactPath": result.get("artifactPath"),
+                                "error": result.get("error"),
+                            }
+                        },
+                    )
+                    progress = 15 + int(completed_count / len(engine_ids) * 45)
+                    self._mark_report_running(workspace_id, task_id, progress, "orchestrating")
+        finally:
+            forum_logs = self._stop_report_forum_monitor(workspace_id, task_id, forum_monitor)
+            orchestration_meta["forum"]["status"] = "succeeded"
+            orchestration_meta["forum"]["completedAt"] = utc_now()
+            self._update_report_orchestration(workspace_id, task_id, orchestration_meta)
+
+        failed = [result for result in engine_results.values() if result["status"] != "succeeded"]
+        if failed:
+            orchestration_meta["status"] = "failed"
+            orchestration_meta["completedAt"] = utc_now()
+            self._update_report_orchestration(workspace_id, task_id, orchestration_meta)
+            details = "; ".join(
+                f"{ENGINE_DISPLAY_NAMES.get(item['engine'], item['engine'])}: {item.get('error', 'failed')}"
+                for item in failed
+            )
+            raise RuntimeError(f"Pre-report orchestration failed. {details}")
+
+        orchestration_meta["status"] = "succeeded"
+        orchestration_meta["completedAt"] = utc_now()
+        self._update_report_orchestration(workspace_id, task_id, orchestration_meta)
+        self._mark_report_running(workspace_id, task_id, 75, "data_loaded")
+
+        reports = [
+            engine_results[engine_id]["report"]
+            for engine_id in engine_ids
+            if engine_results.get(engine_id, {}).get("report")
+        ]
+        return reports, forum_logs
+
+    def _run_pre_report_engine(
+        self,
+        engine_id: str,
+        topic: str,
+        task_workspace: Path,
+        base_settings: Any,
+        task_id: str,
+    ) -> dict[str, Any]:
+        started_at = utc_now()
+        engine_dir = task_workspace / engine_id
+        engine_dir.mkdir(parents=True, exist_ok=True)
+        forum_dir = task_workspace / "forum"
+        engine_config = self._task_engine_settings(base_settings, engine_id, task_workspace)
+        handler_id = self._add_forum_engine_log_handler(engine_id, task_id, forum_dir)
+        forum_token = None
+        reset_forum_log_dir = None
+        try:
+            from utils.forum_reader import reset_forum_log_dir, set_forum_log_dir
+
+            forum_token = set_forum_log_dir(str(forum_dir))
+            with logger.contextualize(report_task_id=task_id):
+                if engine_id == "query":
+                    from QueryEngine.agent import DeepSearchAgent
+
+                    agent = DeepSearchAgent(engine_config)
+                elif engine_id == "media":
+                    from MediaEngine.agent import AnspireSearchAgent, DeepSearchAgent
+
+                    if getattr(engine_config, "SEARCH_TOOL_TYPE", "") == "AnspireAPI":
+                        agent = AnspireSearchAgent(engine_config)
+                    else:
+                        agent = DeepSearchAgent(engine_config)
+                elif engine_id == "insight":
+                    from InsightEngine.agent import DeepSearchAgent
+
+                    agent = DeepSearchAgent(engine_config)
+                else:
+                    raise ValueError(f"Unsupported orchestration engine: {engine_id}")
+
+                report = agent.research(topic, save_report=True)
+            if not isinstance(report, str):
+                report = str(report or "")
+            artifact_path = engine_dir / f"{engine_id}_report.md"
+            artifact_path.write_text(report, encoding="utf-8")
+            return {
+                "engine": engine_id,
+                "status": "succeeded",
+                "report": report,
+                "artifactPath": str(artifact_path),
+                "startedAt": started_at,
+                "completedAt": utc_now(),
+            }
+        finally:
+            if forum_token is not None and reset_forum_log_dir is not None:
+                reset_forum_log_dir(forum_token)
+            logger.remove(handler_id)
+
+    def _start_report_forum_monitor(
+        self,
+        workspace_id: str,
+        task_id: str,
+        task_workspace: Path,
+    ) -> Any:
+        forum_dir = task_workspace / "forum"
+        forum_dir.mkdir(parents=True, exist_ok=True)
+        for engine_id in REPORT_ORCHESTRATION_ENGINES:
+            (forum_dir / f"{engine_id}.log").touch()
+        from ForumEngine.monitor import LogMonitor
+
+        monitor = LogMonitor(log_dir=str(forum_dir))
+        monitor.start_monitoring()
+        self.add_event(
+            workspace_id,
+            task_id,
+            "report",
+            "orchestration",
+            {
+                "payload": {
+                    "stage": "forum_monitor_started",
+                    "engine": "forum",
+                    "status": "running",
+                    "artifactPath": str(forum_dir / "forum.log"),
+                }
+            },
+        )
+        return monitor
+
+    def _stop_report_forum_monitor(
+        self,
+        workspace_id: str,
+        task_id: str,
+        monitor: Any,
+    ) -> str:
+        time.sleep(float(os.getenv("BETTAFISH_FORUM_MONITOR_DRAIN_SECONDS", "1.2")))
+        monitor.stop_monitoring()
+        forum_logs = "\n".join(monitor.get_forum_log_content())
+        self.add_event(
+            workspace_id,
+            task_id,
+            "report",
+            "orchestration",
+            {
+                "payload": {
+                    "stage": "forum_monitor_stopped",
+                    "engine": "forum",
+                    "status": "succeeded",
+                    "artifactPath": str(monitor.forum_log_file),
+                }
+            },
+        )
+        return forum_logs
+
+    @staticmethod
+    def _add_forum_engine_log_handler(engine_id: str, task_id: str, forum_dir: Path) -> int:
+        package_prefix = {
+            "query": "QueryEngine",
+            "media": "MediaEngine",
+            "insight": "InsightEngine",
+        }[engine_id]
+        return logger.add(
+            str(forum_dir / f"{engine_id}.log"),
+            level="INFO",
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {name}:{function}:{line} - {message}",
+            filter=lambda record: (
+                record["extra"].get("report_task_id") == task_id
+                and str(record["name"]).startswith(package_prefix)
+            ),
+        )
+
+    def _task_engine_settings(self, base_settings: Any, engine_id: str, task_workspace: Path) -> Any:
+        config = copy.copy(base_settings)
+        engine_dir = task_workspace / engine_id
+        config.OUTPUT_DIR = str(engine_dir)
+        config.LOG_FILE = str(engine_dir / f"{engine_id}.log")
+        if engine_id == "report":
+            config.CHAPTER_OUTPUT_DIR = str(engine_dir / "chapters")
+            config.DOCUMENT_IR_OUTPUT_DIR = str(engine_dir / "document_ir")
+            config.JSON_ERROR_LOG_DIR = str(engine_dir / "json_errors")
+        engine_dir.mkdir(parents=True, exist_ok=True)
+        return config
+
+    def _report_task_workspace(self, workspace_id: str, task_id: str) -> Path:
+        workspace_segment = slugify_filename(workspace_id, "workspace")
+        return self.artifact_dir / "workspaces" / workspace_segment / task_id
+
+    @staticmethod
+    def _report_orchestration_enabled(source_scope: dict[str, Any]) -> bool:
+        orchestration = source_scope.get("orchestration") or {}
+        return orchestration.get("enabled", True) is not False
+
+    @staticmethod
+    def _report_orchestration_engines(source_scope: dict[str, Any]) -> tuple[str, ...]:
+        orchestration = source_scope.get("orchestration") or {}
+        requested = orchestration.get("engines") or list(REPORT_ORCHESTRATION_ENGINES)
+        return tuple(engine for engine in REPORT_ORCHESTRATION_ENGINES if engine in requested)
+
+    def _update_report_orchestration(
+        self,
+        workspace_id: str,
+        task_id: str,
+        orchestration: dict[str, Any],
+    ) -> None:
+        row = self.store.query_one(
+            "SELECT source_scope_json FROM report_tasks WHERE workspace_id = ? AND id = ?",
+            (workspace_id, task_id),
+        )
+        if not row:
+            return
+        source_scope = loads(row["source_scope_json"], {})
+        source_scope["orchestration"] = orchestration
+        self.store.execute(
+            """
+            UPDATE report_tasks
+            SET source_scope_json = ?, updated_at = ?
+            WHERE workspace_id = ? AND id = ?
+            """,
+            (dumps(source_scope), utc_now(), workspace_id, task_id),
+        )
+
+    def _apply_workspace_runtime_config(self, workspace_id: str) -> None:
+        rows = self.store.query_all(
+            "SELECT key, value_json FROM app_configs WHERE workspace_id = ?",
+            (workspace_id,),
+        )
+        for row in rows:
+            value = loads(row["value_json"], None)
+            if value is None:
+                continue
+            os.environ[row["key"]] = str(value)
 
     @staticmethod
     def _read_required_text(path: Path) -> str:
@@ -570,6 +1011,26 @@ class TaskService:
                 reports.append(latest.read_text(encoding="utf-8", errors="replace"))
         return reports
 
+    @staticmethod
+    def _topic_only_report_seed(task: dict[str, Any]) -> str:
+        topic = task.get("topic") or "未命名报告"
+        return "\n".join(
+            [
+                "# 主题驱动报告输入",
+                "",
+                f"报告主题：{topic}",
+                "",
+                "## 输入状态",
+                "本次报告任务未提供 Query、Media、Insight 引擎报告，也未提供 sourceScope.inputFileRefs。",
+                "请将输出定位为基于主题的舆情分析初稿，并在报告中明确标注缺少外部采集与检索材料的限制。",
+                "",
+                "## 写作要求",
+                "- 围绕报告主题组织舆情背景、关注点、风险线索、机会判断与后续数据采集建议。",
+                "- 不要编造具体平台声量、转评赞数量、用户原文或来源链接。",
+                "- 如需要数据支撑，应以待补充事项或建议采集方向表述。",
+            ]
+        )
+
     def _persist_report_artifacts(
         self,
         workspace_id: str,
@@ -586,18 +1047,26 @@ class TaskService:
             ["html"],
         )
         document_ir = self._load_document_ir(result.get("ir_filepath"))
+        export_dir = self._report_task_workspace(workspace_id, task_id) / "report" / "exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
         artifacts = []
         for report_format in formats:
             path = self.artifact_path(task_id, report_format)
+            suffix = "json" if report_format == "json" else report_format
+            workspace_path = export_dir / f"{task_id}.{suffix}"
             if report_format == "html":
                 html_path = result.get("report_filepath")
                 if html_path and Path(html_path).exists():
                     shutil.copyfile(html_path, path)
+                    if Path(html_path).resolve() != workspace_path.resolve():
+                        shutil.copyfile(html_path, workspace_path)
                 else:
-                    path.write_text(result.get("html_content", ""), encoding="utf-8")
+                    workspace_path.write_text(result.get("html_content", ""), encoding="utf-8")
+                    shutil.copyfile(workspace_path, path)
             elif report_format == "json":
                 content = document_ir if document_ir is not None else result
-                path.write_text(dumps(content), encoding="utf-8")
+                workspace_path.write_text(dumps(content), encoding="utf-8")
+                shutil.copyfile(workspace_path, path)
             elif report_format == "md":
                 if document_ir is None:
                     raise RuntimeError("Report Engine did not return Document IR for Markdown export.")
@@ -607,18 +1076,20 @@ class TaskService:
                     document_ir,
                     ir_file_path=result.get("ir_filepath"),
                 )
-                path.write_text(markdown, encoding="utf-8")
+                workspace_path.write_text(markdown, encoding="utf-8")
+                shutil.copyfile(workspace_path, path)
             elif report_format == "pdf":
                 if document_ir is None:
                     raise RuntimeError("Report Engine did not return Document IR for PDF export.")
                 from ReportEngine.renderers import PDFRenderer
 
-                PDFRenderer().render_to_pdf(
+                rendered_path = PDFRenderer().render_to_pdf(
                     document_ir,
-                    path,
+                    workspace_path,
                     optimize_layout=True,
                     ir_file_path=result.get("ir_filepath"),
                 )
+                shutil.copyfile(Path(rendered_path or workspace_path), path)
             artifacts.append(
                 {
                     "format": report_format,
@@ -722,6 +1193,8 @@ class TaskService:
         self.add_event(workspace_id, task_id, "crawler", "progress", {"task": task})
 
     def _run_real_crawler(self, task: dict[str, Any]) -> dict[str, Any]:
+        login_type = self._crawler_login_type(task)
+
         from MindSpider.DeepSentimentCrawling.platform_crawler import PlatformCrawler
 
         crawler = PlatformCrawler(
@@ -730,7 +1203,7 @@ class TaskService:
         result = crawler.run_multi_platform_crawl_by_keywords(
             task["keywords"],
             task["platforms"],
-            login_type=self._crawler_login_type(task),
+            login_type=login_type,
             max_notes_per_keyword=task.get("maxNotesPerKeyword") or 50,
             headless=task.get("headless") is not False,
         )
@@ -980,6 +1453,11 @@ class TaskService:
         stats = loads(row["stats_json"], {})
         status = row["status"]
         error = loads(row["error_json"], None)
+        schedule = loads(row.get("schedule_json"), {}) or {}
+        if not schedule:
+            schedule = {"mode": "manual", "timezone": "Asia/Shanghai"}
+        start_date = row.get("start_date") or row["target_date"]
+        end_date = row.get("end_date") or row["target_date"]
         if status == "succeeded" and self._crawler_stats_indicate_failure(stats):
             status = "failed"
             error = error or self._crawler_failure_error(stats)
@@ -990,6 +1468,9 @@ class TaskService:
             "strategyId": row["strategy_id"],
             "runMode": row["run_mode"],
             "targetDate": row["target_date"],
+            "startDate": start_date,
+            "endDate": end_date,
+            "schedule": schedule,
             "platforms": loads(row["platforms_json"], []),
             "keywords": loads(row["keywords_json"], []),
             "keywordSource": row["keyword_source"],
@@ -1006,6 +1487,14 @@ class TaskService:
             "updatedAt": row["updated_at"],
         }
         return {key: value for key, value in task.items() if value is not None}
+
+    @staticmethod
+    def _crawler_date_range(payload: CreateCrawlerTaskRequest) -> tuple[str | None, str | None]:
+        if payload.startDate and payload.endDate:
+            return payload.startDate, payload.endDate
+        if payload.targetDate:
+            return payload.targetDate, payload.targetDate
+        return None, None
 
     def _strategy_row(self, row: dict[str, Any]) -> dict[str, Any]:
         strategy = {
@@ -1047,3 +1536,29 @@ class TaskService:
         if payload.customTemplate:
             source_scope["customTemplate"] = payload.customTemplate
         return source_scope
+
+    @staticmethod
+    def _normalize_report_template_id(template_id: str | None) -> str:
+        if not template_id or not template_id.strip():
+            return AUTO_REPORT_TEMPLATE_ID
+        return template_id.strip()
+
+    def _load_manual_report_template(self, task: dict[str, Any]) -> str:
+        template_id = task.get("templateId") or AUTO_REPORT_TEMPLATE_ID
+        if template_id == AUTO_REPORT_TEMPLATE_ID:
+            return ""
+        template_name, template_content = read_report_template(self.repo_root, template_id)
+        self.add_event(
+            task["workspaceId"],
+            task["id"],
+            "report",
+            "stage",
+            {
+                "payload": {
+                    "stage": "template_loaded",
+                    "templateId": template_id,
+                    "templateName": template_name,
+                }
+            },
+        )
+        return template_content

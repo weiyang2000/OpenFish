@@ -42,6 +42,7 @@ export const OPENAPI_PATHS = {
   reportTemplates: "/report-templates",
   reportTasks: "/report-tasks",
   reportTask: (id: string) => `/report-tasks/${id}`,
+  reportTaskDelete: (id: string) => `/report-tasks/${id}`,
   reportTaskCancel: (id: string) => `/report-tasks/${id}:cancel`,
   reportTaskEvents: (id: string) => `/report-tasks/${id}/events`,
   reportTaskLogs: (id: string) => `/report-tasks/${id}/logs`,
@@ -52,6 +53,7 @@ export const OPENAPI_PATHS = {
   crawlerData: "/crawler-data",
   crawlerTasks: "/crawler-tasks",
   crawlerTask: (id: string) => `/crawler-tasks/${id}`,
+  crawlerTaskDelete: (id: string) => `/crawler-tasks/${id}`,
   crawlerTaskLogs: (id: string) => `/crawler-tasks/${id}/logs`,
   crawlerTaskStop: (id: string) => `/crawler-tasks/${id}:stop`,
   crawlerTaskRetry: (id: string) => `/crawler-tasks/${id}:retry`,
@@ -114,6 +116,54 @@ function addLog(source: "system" | "report" | "crawler", message: string, taskId
   });
 }
 
+function appendWorkspaceParam(url: string): string {
+  try {
+    const parsed = new URL(url, "http://bettafish.local");
+    if (!parsed.searchParams.has("workspaceId")) {
+      parsed.searchParams.set("workspaceId", workspaceId);
+    }
+    if (/^https?:\/\//i.test(url)) return parsed.toString();
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}workspaceId=${encodeURIComponent(workspaceId)}`;
+  }
+}
+
+function reportDownloadUrl(downloadUrl?: string): string | undefined {
+  if (!downloadUrl) return undefined;
+
+  if (!API_BASE_URL) return appendWorkspaceParam(downloadUrl);
+
+  try {
+    const apiBase = new URL(API_BASE_URL, "http://bettafish.local");
+    const apiBasePath = apiBase.pathname.replace(/\/$/, "");
+    const apiOrigin = /^https?:\/\//i.test(API_BASE_URL) ? apiBase.origin : "";
+    if (/^https?:\/\//i.test(downloadUrl)) {
+      return appendWorkspaceParam(downloadUrl);
+    }
+    if (downloadUrl === apiBasePath || downloadUrl.startsWith(`${apiBasePath}/`)) {
+      return appendWorkspaceParam(`${apiOrigin}${downloadUrl}`);
+    }
+    if (downloadUrl.startsWith("/")) {
+      return appendWorkspaceParam(`${API_BASE_URL}${downloadUrl}`);
+    }
+    return appendWorkspaceParam(`${API_BASE_URL}/${downloadUrl}`);
+  } catch {
+    return appendWorkspaceParam(downloadUrl);
+  }
+}
+
+function normalizeReportTask(task: ReportTask): ReportTask {
+  return {
+    ...task,
+    artifacts: task.artifacts.map((artifact) => ({
+      ...artifact,
+      downloadUrl: reportDownloadUrl(artifact.downloadUrl)
+    }))
+  };
+}
+
 export async function loadConsoleSnapshot(): Promise<ConsoleSnapshot> {
   if (USE_MOCKS) {
     return getMockSnapshot();
@@ -152,7 +202,7 @@ export async function loadConsoleSnapshot(): Promise<ConsoleSnapshot> {
     mock: false,
     components: components.components,
     reportTemplates: templates.templates,
-    reportTasks: reportTaskPage.tasks,
+    reportTasks: reportTaskPage.tasks.map(normalizeReportTask),
     crawlerTasks: crawlerTaskPage.tasks,
     crawlerStrategies: strategies.strategies,
     crawlerAccounts: accountPage.accounts,
@@ -169,7 +219,7 @@ export async function createReportTask(input: CreateReportTaskInput): Promise<Re
       method: "POST",
       body: JSON.stringify(input)
     });
-    return response.task;
+    return normalizeReportTask(response.task);
   }
 
   const timestamp = taskTimestamp();
@@ -199,7 +249,7 @@ export async function cancelReportTask(taskId: string): Promise<ReportTask> {
     const response = await requestJson<{ task: ReportTask }>(OPENAPI_PATHS.reportTaskCancel(taskId), {
       method: "POST"
     });
-    return response.task;
+    return normalizeReportTask(response.task);
   }
 
   const task = reportTasks.find((item) => item.id === taskId);
@@ -209,6 +259,19 @@ export async function cancelReportTask(taskId: string): Promise<ReportTask> {
   task.updatedAt = taskTimestamp();
   addLog("report", `Report task ${task.id} cancelled`, task.id);
   return task;
+}
+
+export async function deleteReportTask(taskId: string): Promise<void> {
+  if (!USE_MOCKS) {
+    await requestJson<void>(OPENAPI_PATHS.reportTaskDelete(taskId), {
+      method: "DELETE"
+    });
+    return;
+  }
+
+  const index = reportTasks.findIndex((item) => item.id === taskId);
+  if (index >= 0) reportTasks.splice(index, 1);
+  addLog("report", `Report task ${taskId} deleted`, taskId);
 }
 
 export async function createCrawlerTask(input: CreateCrawlerTaskInput): Promise<CrawlerTask> {
@@ -221,14 +284,20 @@ export async function createCrawlerTask(input: CreateCrawlerTaskInput): Promise<
   }
 
   const timestamp = taskTimestamp();
+  const schedule = input.schedule ?? { mode: "manual" as const, timezone: "Asia/Shanghai" };
+  const startDate = input.startDate ?? input.targetDate;
+  const endDate = input.endDate ?? input.targetDate;
   const task: CrawlerTask = {
     id: nextId("crawler"),
     workspaceId,
     runMode: input.runMode,
-    status: "queued",
+    status: schedule.mode === "manual" ? "queued" : "pending",
     progress: 0,
     strategyId: input.strategyId,
-    targetDate: input.targetDate,
+    targetDate: input.targetDate ?? startDate,
+    startDate,
+    endDate,
+    schedule,
     platforms: input.platforms,
     keywords: input.keywords,
     keywordSource: input.keywordSource,
@@ -248,6 +317,19 @@ export async function createCrawlerTask(input: CreateCrawlerTaskInput): Promise<
   crawlerTasks.unshift(task);
   addLog("crawler", `Crawler task ${task.id} queued`, task.id);
   return task;
+}
+
+export async function deleteCrawlerTask(taskId: string): Promise<void> {
+  if (!USE_MOCKS) {
+    await requestJson<void>(OPENAPI_PATHS.crawlerTaskDelete(taskId), {
+      method: "DELETE"
+    });
+    return;
+  }
+
+  const index = crawlerTasks.findIndex((item) => item.id === taskId);
+  if (index >= 0) crawlerTasks.splice(index, 1);
+  addLog("crawler", `Crawler task ${taskId} deleted`, taskId);
 }
 
 export async function stopCrawlerTask(taskId: string): Promise<CrawlerTask> {

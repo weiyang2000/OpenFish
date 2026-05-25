@@ -4,11 +4,27 @@ Forum日志读取工具
 """
 
 import re
+from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Optional, List, Dict
 from loguru import logger
 
-def get_latest_host_speech(log_dir: str = "logs") -> Optional[str]:
+_forum_log_dir: ContextVar[str | None] = ContextVar("forum_log_dir", default=None)
+
+
+def set_forum_log_dir(log_dir: str) -> Token:
+    return _forum_log_dir.set(log_dir)
+
+
+def reset_forum_log_dir(token: Token) -> None:
+    _forum_log_dir.reset(token)
+
+
+def _resolve_log_dir(log_dir: str | None = None) -> str:
+    return log_dir or _forum_log_dir.get() or "logs"
+
+
+def get_latest_host_speech(log_dir: str | None = None) -> Optional[str]:
     """
     获取forum.log中最新的HOST发言
     
@@ -19,7 +35,7 @@ def get_latest_host_speech(log_dir: str = "logs") -> Optional[str]:
         最新的HOST发言内容，如果没有则返回None
     """
     try:
-        forum_log_path = Path(log_dir) / "forum.log"
+        forum_log_path = Path(_resolve_log_dir(log_dir)) / "forum.log"
         
         if not forum_log_path.exists():
             logger.debug("forum.log文件不存在")
@@ -51,7 +67,7 @@ def get_latest_host_speech(log_dir: str = "logs") -> Optional[str]:
         return None
 
 
-def get_all_host_speeches(log_dir: str = "logs") -> List[Dict[str, str]]:
+def get_all_host_speeches(log_dir: str | None = None) -> List[Dict[str, str]]:
     """
     获取forum.log中所有的HOST发言
     
@@ -62,7 +78,7 @@ def get_all_host_speeches(log_dir: str = "logs") -> List[Dict[str, str]]:
         包含所有HOST发言的列表，每个元素是包含timestamp和content的字典
     """
     try:
-        forum_log_path = Path(log_dir) / "forum.log"
+        forum_log_path = Path(_resolve_log_dir(log_dir)) / "forum.log"
         
         if not forum_log_path.exists():
             logger.debug("forum.log文件不存在")
@@ -92,7 +108,7 @@ def get_all_host_speeches(log_dir: str = "logs") -> List[Dict[str, str]]:
         return []
 
 
-def get_recent_agent_speeches(log_dir: str = "logs", limit: int = 5) -> List[Dict[str, str]]:
+def get_recent_agent_speeches(log_dir: str | None = None, limit: int = 5) -> List[Dict[str, str]]:
     """
     获取forum.log中最近的Agent发言（不包括HOST）
     
@@ -104,7 +120,7 @@ def get_recent_agent_speeches(log_dir: str = "logs", limit: int = 5) -> List[Dic
         包含最近Agent发言的列表
     """
     try:
-        forum_log_path = Path(log_dir) / "forum.log"
+        forum_log_path = Path(_resolve_log_dir(log_dir)) / "forum.log"
         
         if not forum_log_path.exists():
             return []

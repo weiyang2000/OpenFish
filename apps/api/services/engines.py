@@ -7,6 +7,7 @@ from typing import Any
 
 from apps.api.schemas import ApiError, COMPONENT_IDS
 from apps.api.services.common import utc_now
+from apps.api.services.report_templates import list_report_templates
 
 
 COMPONENT_NAMES = {
@@ -19,11 +20,22 @@ COMPONENT_NAMES = {
     "database": "Database",
 }
 
+ADAPTER_COMPONENT_DIRS = {
+    "query": "QueryEngine",
+    "media": "MediaEngine",
+    "insight": "InsightEngine",
+    "forum": "ForumEngine",
+    "report": "ReportEngine",
+    "mindspider": "MindSpider",
+}
+
+
 class EngineFacade:
     """Thin boundary between the SaaS API and legacy engine/runtime files."""
 
-    def __init__(self, repo_root: Path):
+    def __init__(self, repo_root: Path, crawler_workers_enabled: bool = False):
         self.repo_root = repo_root
+        self.crawler_workers_enabled = crawler_workers_enabled
         self._component_overrides: dict[str, str] = {}
 
     def list_components(self) -> list[dict[str, Any]]:
@@ -54,22 +66,7 @@ class EngineFacade:
         return next(item for item in self.list_components() if item["id"] == component_id)
 
     def list_report_templates(self) -> list[dict[str, Any]]:
-        template_dir = self.repo_root / "ReportEngine" / "report_template"
-        templates = []
-        if not template_dir.exists():
-            return templates
-        for path in sorted(template_dir.glob("*.md")):
-            stat = path.stat()
-            templates.append(
-                {
-                    "id": self._template_id(path.stem),
-                    "name": path.stem,
-                    "filename": path.name,
-                    "description": self._template_description(path),
-                    "sizeBytes": stat.st_size,
-                }
-            )
-        return templates
+        return list_report_templates(self.repo_root)
 
     def list_logs(
         self,
@@ -116,20 +113,30 @@ class EngineFacade:
     def _infer_status(self, component_id: str) -> str:
         if component_id == "database":
             return "running"
-        if component_id == "report":
-            return "running" if (self.repo_root / "ReportEngine").exists() else "unknown"
         if component_id == "mindspider":
-            return "stopped"
+            if not self._component_directory_exists(component_id):
+                return "unknown"
+            return "running" if self.crawler_workers_enabled else "stopped"
+        if component_id in ADAPTER_COMPONENT_DIRS:
+            return "running" if self._component_directory_exists(component_id) else "unknown"
         return "unknown"
 
     def _message(self, component_id: str, status: str) -> str:
         if component_id == "database":
             return "SaaS persistence is initialized"
         if status == "running":
+            if component_id == "mindspider":
+                return "Crawler worker is enabled through the service adapter"
             return "Component is available through the service adapter"
         if component_id == "mindspider":
             return "No crawler worker is currently running"
+        if status == "unknown":
+            return "Component files were not found in the application workspace"
         return "Legacy component status is not directly managed by the SaaS API"
+
+    def _component_directory_exists(self, component_id: str) -> bool:
+        directory = ADAPTER_COMPONENT_DIRS.get(component_id)
+        return bool(directory and (self.repo_root / directory).exists())
 
     def _count_output_lines(self, component_id: str) -> int:
         log_dir = self.repo_root / "logs"
@@ -142,29 +149,6 @@ class EngineFacade:
             except OSError:
                 continue
         return count
-
-    @staticmethod
-    def _template_id(name: str) -> str:
-        mapping = {
-            "日常或定期舆情监测报告模板": "daily-monitoring",
-            "突发事件与危机公关舆情报告模板": "crisis-response",
-            "特定政策或行业动态舆情分析报告模板": "industry-policy",
-            "企业品牌声誉分析报告模板": "brand-reputation",
-            "市场竞争格局舆情分析报告模板": "market-competition",
-            "社会公共热点事件分析报告模板": "public-hot-topic",
-        }
-        return mapping.get(name, name.lower().replace(" ", "-"))
-
-    @staticmethod
-    def _template_description(path: Path) -> str:
-        try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                line = line.strip("# ").strip()
-                if line:
-                    return line[:120]
-        except OSError:
-            pass
-        return path.stem
 
     @staticmethod
     def _source_from_log_name(filename: str) -> str:

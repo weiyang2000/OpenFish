@@ -311,6 +311,11 @@ secrets.json
 *.crt
 config.py
 MindSpider/config.py
+!/config.py
+!QueryEngine/utils/config.py
+!MediaEngine/utils/config.py
+!InsightEngine/utils/config.py
+!ReportEngine/utils/config.py
 
 # API 密钥
 api_keys.txt

@@ -1,9 +1,14 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:22-alpine AS deps
 
 WORKDIR /app
 
+ARG NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
+
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci
 
 FROM node:22-alpine AS builder
 

@@ -189,7 +189,10 @@ test("creates crawler tasks with explicit keywords and selected platforms", asyn
           runMode: crawlerPayload?.runMode,
           status: "queued",
           progress: 0,
-          targetDate: crawlerPayload?.targetDate,
+          targetDate: crawlerPayload?.targetDate ?? crawlerPayload?.startDate,
+          startDate: crawlerPayload?.startDate,
+          endDate: crawlerPayload?.endDate,
+          schedule: crawlerPayload?.schedule,
           platforms: crawlerPayload?.platforms,
           keywords: crawlerPayload?.keywords,
           keywordSource: crawlerPayload?.keywordSource,
@@ -217,11 +220,82 @@ test("creates crawler tasks with explicit keywords and selected platforms", asyn
 
   expect(crawlerPayload).toMatchObject({
     runMode: "deep_sentiment",
+    startDate: "2026-05-22",
+    endDate: "2026-05-25",
+    schedule: { mode: "manual", timezone: "Asia/Shanghai" },
     platforms: ["wb", "xhs"],
     keywords: ["养老服务", "医保支付"],
     keywordSource: "manual"
   });
   await expect(page.getByText("爬虫任务已创建")).toBeVisible();
+});
+
+test("points report downloads at the API origin with workspace fallback", async ({ page }) => {
+  await routeJson(page, "/system/components", {
+    success: true,
+    components: [{ id: "report", name: "Report Engine", status: "running" }]
+  });
+  await routeJson(page, "/report-templates", {
+    success: true,
+    templates: [{ id: "daily-monitoring", name: "日报", filename: "daily.md", description: "", sizeBytes: 10 }]
+  });
+  await routeJson(page, "/report-tasks", {
+    success: true,
+    tasks: [
+      {
+        id: "report_ready",
+        workspaceId: "workspace_e2e",
+        topic: "下载修复验证",
+        status: "succeeded",
+        progress: 100,
+        stage: "completed",
+        artifacts: [
+          {
+            format: "html",
+            ready: true,
+            filename: "report.html",
+            downloadUrl: "/api/v1/report-tasks/report_ready/exports/html"
+          },
+          {
+            format: "pdf",
+            ready: true,
+            filename: "report.pdf",
+            downloadUrl: "/api/v1/report-tasks/report_ready/exports/pdf"
+          }
+        ],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ]
+  });
+  await routeJson(page, "/crawler-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/crawler-strategies", { success: true, strategies: [] });
+  await routeJson(page, "/crawler-accounts", { success: true, accounts: [] });
+  await routeJson(page, "/platforms", {
+    success: true,
+    platforms: [platform("wb", "微博", { allow: 0, block: 0 })]
+  });
+  await routeJson(page, "/system/config", { success: true, fields: [] });
+  await routeJson(page, "/logs?tail=300", { success: true, lines: [] });
+  await page.route(`${apiBase}/platforms/*/identity-lists`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, rules: [] })
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "报告" }).click();
+
+  await expect(page.locator(".artifact-chip", { hasText: "html" })).toHaveAttribute(
+    "href",
+    `${apiBase}/report-tasks/report_ready/exports/html?workspaceId=workspace_e2e`
+  );
+  await expect(page.locator(".artifact-chip", { hasText: "pdf" })).toHaveAttribute(
+    "href",
+    `${apiBase}/report-tasks/report_ready/exports/pdf?workspaceId=workspace_e2e`
+  );
 });
 
 async function routeJson(page: import("@playwright/test").Page, path: string, body: unknown) {

@@ -39,7 +39,9 @@ import {
   createCrawlerTask,
   createIdentityRule,
   createReportTask,
+  deleteCrawlerTask,
   deleteIdentityRule,
+  deleteReportTask,
   getCrawlerAccountLoginSession,
   listCrawlerData,
   listTaskLogs,
@@ -52,10 +54,12 @@ import type {
   ComponentStatus,
   ConfigField,
   ConsoleSnapshot,
+  CrawlFrequency,
   CrawlerAccount,
   CrawlerAccountLoginSession,
   CrawlerAccountStatus,
   CrawlerDataPage,
+  CrawlerSentiment,
   CrawlerTaskKeywordSource,
   CrawlerTask,
   IdentityListType,
@@ -64,6 +68,7 @@ import type {
   PlatformId,
   PlatformPolicy,
   ReportFormat,
+  ReportTemplate,
   ReportTask,
   RunMode,
   TaskLogPage,
@@ -77,6 +82,15 @@ const currentUser = {
   userId: "user_demo",
   displayName: "Demo Operator",
   role: "operator" as const
+};
+
+const AUTO_REPORT_TEMPLATE_ID = "auto";
+const autoReportTemplate: ReportTemplate = {
+  id: AUTO_REPORT_TEMPLATE_ID,
+  name: "自动选择",
+  filename: "",
+  description: "根据报告主题和输入材料自动选择最合适的报告模板。",
+  sizeBytes: 0
 };
 
 const navItems: Array<{ id: Section; label: string; icon: React.ComponentType<{ size?: number }> }> = [
@@ -105,6 +119,21 @@ const loginTypeLabels: Record<PlatformPolicy["loginType"], string> = {
   cookie: "Cookie"
 };
 
+const scheduleLabels: Record<CrawlFrequency["mode"], string> = {
+  manual: "手动执行",
+  hourly: "每小时",
+  daily: "每日",
+  weekly: "每周",
+  cron: "Cron"
+};
+
+const sentimentLabels: Record<CrawlerSentiment, string> = {
+  positive: "正向",
+  neutral: "中性",
+  negative: "负向",
+  unknown: "未知"
+};
+
 function classNames(...values: Array<string | false | undefined>) {
   return values.filter(Boolean).join(" ");
 }
@@ -129,6 +158,14 @@ function StatusBadge({ value }: { value: TaskStatus | ComponentStatus | CrawlerA
   return <span className={classNames("status-badge", `tone-${statusTone(value)}`)}>{value}</span>;
 }
 
+function SentimentBadge({ value = "unknown" }: { value?: CrawlerSentiment }) {
+  return (
+    <span className={classNames("sentiment-badge", `sentiment-${value}`)}>
+      情绪：{sentimentLabels[value]}
+    </span>
+  );
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
@@ -140,6 +177,20 @@ function formatTime(value: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function formatCrawlerDateRange(task: CrawlerTask) {
+  const start = task.startDate ?? task.targetDate;
+  const end = task.endDate ?? task.targetDate;
+  if (!start && !end) return "未设日期";
+  if (!end || start === end) return start ?? end;
+  return `${start} 至 ${end}`;
+}
+
+function formatCrawlerSchedule(schedule?: CrawlFrequency) {
+  if (!schedule) return scheduleLabels.manual;
+  if (schedule.mode === "cron") return schedule.cron ? `Cron ${schedule.cron}` : scheduleLabels.cron;
+  return scheduleLabels[schedule.mode];
 }
 
 function formatPayload(payload: Record<string, unknown>) {
@@ -219,8 +270,16 @@ function replaceReportTask(tasks: ReportTask[], updated: ReportTask) {
   return tasks.map((task) => (task.id === updated.id ? updated : task));
 }
 
+function removeReportTask(tasks: ReportTask[], taskId: string) {
+  return tasks.filter((task) => task.id !== taskId);
+}
+
 function replaceCrawlerTask(tasks: CrawlerTask[], updated: CrawlerTask) {
   return tasks.map((task) => (task.id === updated.id ? updated : task));
+}
+
+function removeCrawlerTask(tasks: CrawlerTask[], taskId: string) {
+  return tasks.filter((task) => task.id !== taskId);
 }
 
 function mergeCrawlerAccount(accounts: CrawlerAccount[], account: CrawlerAccount) {
@@ -272,7 +331,7 @@ export function ConsoleShell() {
   const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
   const [reportForm, setReportForm] = useState({
     topic: "",
-    templateId: "daily-monitoring",
+    templateId: AUTO_REPORT_TEMPLATE_ID,
     formats: {
       html: true,
       md: false,
@@ -282,7 +341,10 @@ export function ConsoleShell() {
   });
   const [crawlerForm, setCrawlerForm] = useState<{
     runMode: RunMode;
-    targetDate: string;
+    startDate: string;
+    endDate: string;
+    scheduleMode: CrawlFrequency["mode"];
+    scheduleCron: string;
     platforms: PlatformId[];
     keywords: string;
     keywordSource: CrawlerTaskKeywordSource;
@@ -291,7 +353,10 @@ export function ConsoleShell() {
     headless: boolean;
   }>({
     runMode: "deep_sentiment",
-    targetDate: "2026-05-22",
+    startDate: "2026-05-22",
+    endDate: "2026-05-25",
+    scheduleMode: "manual",
+    scheduleCron: "",
     platforms: ["wb"] as PlatformId[],
     keywords: "养老服务\n医保支付",
     keywordSource: "manual",
@@ -380,6 +445,13 @@ export function ConsoleShell() {
     snapshot?.logs.filter((line) => logSource === "all" || line.source === logSource) ?? [];
   const accountLoginInProgress =
     accountLoginSession?.status === "opening" || accountLoginSession?.status === "waiting";
+  const reportTemplateOptions = useMemo(() => {
+    const templates = snapshot?.reportTemplates ?? [];
+    if (templates.some((template) => template.id === AUTO_REPORT_TEMPLATE_ID)) {
+      return templates;
+    }
+    return [autoReportTemplate, ...templates];
+  }, [snapshot?.reportTemplates]);
 
   async function runAction(label: string, action: () => Promise<void>) {
     setBusyAction(label);
@@ -485,9 +557,20 @@ export function ConsoleShell() {
         )
       );
       if (keywords.length === 0) throw new Error("至少输入一个关键词");
+      if (!crawlerForm.startDate || !crawlerForm.endDate) throw new Error("请选择爬取时间区间");
+      if (crawlerForm.startDate > crawlerForm.endDate) throw new Error("结束日期不能早于开始日期");
+      if (crawlerForm.scheduleMode === "cron" && !crawlerForm.scheduleCron.trim()) {
+        throw new Error("Cron 表达式不能为空");
+      }
       const task = await createCrawlerTask({
         runMode: crawlerForm.runMode,
-        targetDate: crawlerForm.targetDate,
+        startDate: crawlerForm.startDate,
+        endDate: crawlerForm.endDate,
+        schedule: {
+          mode: crawlerForm.scheduleMode,
+          timezone: "Asia/Shanghai",
+          ...(crawlerForm.scheduleMode === "cron" ? { cron: crawlerForm.scheduleCron.trim() } : {})
+        },
         platforms: crawlerForm.platforms,
         keywords,
         keywordSource: crawlerForm.keywordSource,
@@ -760,7 +843,7 @@ export function ConsoleShell() {
                   value={reportForm.templateId}
                   onChange={(event) => setReportForm({ ...reportForm, templateId: event.target.value })}
                 >
-                  {snapshot.reportTemplates.map((template) => (
+                  {reportTemplateOptions.map((template) => (
                     <option key={template.id} value={template.id}>
                       {template.name}
                     </option>
@@ -842,6 +925,23 @@ export function ConsoleShell() {
                           }
                         >
                           <CircleStop size={16} />
+                        </button>
+                      ) : null}
+                      {task.status !== "running" && task.status !== "pending" ? (
+                        <button
+                          className="icon-button danger"
+                          title="删除报告任务"
+                          onClick={() =>
+                            void runAction("报告任务已删除", async () => {
+                              await deleteReportTask(task.id);
+                              setSnapshot({
+                                ...snapshot,
+                                reportTasks: removeReportTask(snapshot.reportTasks, task.id)
+                              });
+                            })
+                          }
+                        >
+                          <Trash2 size={16} />
                         </button>
                       ) : null}
                     </div>
@@ -984,13 +1084,46 @@ export function ConsoleShell() {
                 </select>
               </label>
               <label className="field">
-                <span>日期</span>
+                <span>开始日期</span>
                 <input
                   type="date"
-                  value={crawlerForm.targetDate}
-                  onChange={(event) => setCrawlerForm({ ...crawlerForm, targetDate: event.target.value })}
+                  value={crawlerForm.startDate}
+                  onChange={(event) => setCrawlerForm({ ...crawlerForm, startDate: event.target.value })}
                 />
               </label>
+              <label className="field">
+                <span>结束日期</span>
+                <input
+                  type="date"
+                  value={crawlerForm.endDate}
+                  onChange={(event) => setCrawlerForm({ ...crawlerForm, endDate: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>定时</span>
+                <select
+                  value={crawlerForm.scheduleMode}
+                  onChange={(event) =>
+                    setCrawlerForm({ ...crawlerForm, scheduleMode: event.target.value as CrawlFrequency["mode"] })
+                  }
+                >
+                  <option value="manual">手动执行</option>
+                  <option value="hourly">每小时</option>
+                  <option value="daily">每日</option>
+                  <option value="weekly">每周</option>
+                  <option value="cron">Cron</option>
+                </select>
+              </label>
+              {crawlerForm.scheduleMode === "cron" ? (
+                <label className="field">
+                  <span>Cron</span>
+                  <input
+                    value={crawlerForm.scheduleCron}
+                    onChange={(event) => setCrawlerForm({ ...crawlerForm, scheduleCron: event.target.value })}
+                    placeholder="0 9 * * *"
+                  />
+                </label>
+              ) : null}
               <label className="field">
                 <span>笔记/关键词</span>
                 <input
@@ -1060,6 +1193,7 @@ export function ConsoleShell() {
                     <strong>{task.keywords.slice(0, 3).join(" / ") || task.runMode}</strong>
                     <span>
                       {task.platforms.map((id) => platformNames[id]).join(" / ")} · {task.keywordSource} ·{" "}
+                      {formatCrawlerDateRange(task)} · {formatCrawlerSchedule(task.schedule)} ·{" "}
                       {formatTime(task.updatedAt)}
                     </span>
                     <ProgressBar value={task.progress} />
@@ -1098,6 +1232,23 @@ export function ConsoleShell() {
                         }
                       >
                         <StopCircle size={16} />
+                      </button>
+                    ) : null}
+                    {task.status !== "running" && task.status !== "stopping" ? (
+                      <button
+                        className="icon-button danger"
+                        title="删除爬虫任务"
+                        onClick={() =>
+                          void runAction("爬虫任务已删除", async () => {
+                            await deleteCrawlerTask(task.id);
+                            setSnapshot({
+                              ...snapshot,
+                              crawlerTasks: removeCrawlerTask(snapshot.crawlerTasks, task.id)
+                            });
+                          })
+                        }
+                      >
+                        <Trash2 size={16} />
                       </button>
                     ) : null}
                   </div>
@@ -1203,6 +1354,7 @@ export function ConsoleShell() {
                       <div className="crawler-data-title">
                         <strong>{record.title || record.sourceId}</strong>
                         <StatusBadge value={record.contentType === "content" ? "running" : "queued"} />
+                        <SentimentBadge value={record.sentiment} />
                       </div>
                       <p>{record.textSnippet || "无正文摘要"}</p>
                       <div className="crawler-data-meta">

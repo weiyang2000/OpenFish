@@ -202,6 +202,12 @@ export const crawlerTasks: CrawlerTask[] = [
     progress: 100,
     strategyId: "strategy_daily_hot_topics",
     targetDate: "2026-05-22",
+    startDate: "2026-05-20",
+    endDate: "2026-05-22",
+    schedule: {
+      mode: "daily",
+      timezone: "Asia/Shanghai"
+    },
     platforms: ["wb", "xhs", "zhihu"],
     keywords: ["养老服务", "医保支付", "养老院"],
     keywordSource: "manual",
@@ -229,6 +235,12 @@ export const crawlerTasks: CrawlerTask[] = [
     progress: 44,
     strategyId: "strategy_brand_watch",
     targetDate: "2026-05-22",
+    startDate: "2026-05-22",
+    endDate: "2026-05-25",
+    schedule: {
+      mode: "hourly",
+      timezone: "Asia/Shanghai"
+    },
     platforms: ["dy", "bili"],
     keywords: ["AI 教育硬件", "学习机口碑"],
     keywordSource: "manual",
@@ -325,6 +337,7 @@ export const crawlerDataRecords: CrawlerDataRecord[] = [
     url: "https://www.xiaohongshu.com/explore/xhs_001",
     createdAt: "2026-05-22T06:42:00Z",
     scrapedAt: "2026-05-22T06:49:00Z",
+    sentiment: "positive",
     metrics: {
       likes: 128,
       comments: 36
@@ -343,6 +356,7 @@ export const crawlerDataRecords: CrawlerDataRecord[] = [
     url: "https://weibo.com/detail/wb_002",
     createdAt: "2026-05-22T07:20:00Z",
     scrapedAt: "2026-05-22T07:28:00Z",
+    sentiment: "neutral",
     metrics: {
       likes: 412,
       comments: 88
@@ -360,6 +374,7 @@ export const crawlerDataRecords: CrawlerDataRecord[] = [
     keyword: "养老服务",
     createdAt: "2026-05-22T08:11:00Z",
     scrapedAt: "2026-05-22T08:18:00Z",
+    sentiment: "positive",
     metrics: {
       likes: 24,
       comments: 0

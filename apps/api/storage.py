@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS crawler_tasks (
     strategy_id TEXT,
     run_mode TEXT NOT NULL,
     target_date TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    schedule_json TEXT NOT NULL DEFAULT '{}',
     platforms_json TEXT NOT NULL DEFAULT '[]',
     keywords_json TEXT NOT NULL DEFAULT '[]',
     keyword_source TEXT NOT NULL DEFAULT 'manual',
@@ -209,6 +212,24 @@ class Store:
                 "crawler_tasks",
                 "keywords_json",
                 "TEXT NOT NULL DEFAULT '[]'",
+            )
+            self._ensure_column(
+                conn,
+                "crawler_tasks",
+                "start_date",
+                "TEXT",
+            )
+            self._ensure_column(
+                conn,
+                "crawler_tasks",
+                "end_date",
+                "TEXT",
+            )
+            self._ensure_column(
+                conn,
+                "crawler_tasks",
+                "schedule_json",
+                "TEXT NOT NULL DEFAULT '{}'",
             )
             self._ensure_column(
                 conn,

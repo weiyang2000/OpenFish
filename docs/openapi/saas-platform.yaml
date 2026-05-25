@@ -261,7 +261,7 @@ paths:
               policyTopic:
                 value:
                   topic: 养老服务发展趋势
-                  templateId: daily-monitoring
+                  templateId: auto
                   sourceScope:
                     searchRunId: search_20260522_001
                     includeForumLog: true
@@ -294,6 +294,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReportTaskResponse"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Reports]
+      summary: Delete a report task and its persisted artifacts.
+      operationId: deleteReportTask
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "204":
+          description: Report task deleted.
         default:
           $ref: "#/components/responses/Error"
 
@@ -399,6 +411,11 @@ paths:
             type: boolean
             default: true
           description: Applies to PDF exports.
+        - name: workspaceId
+          in: query
+          schema:
+            type: string
+          description: Optional browser-download fallback when custom headers cannot be sent.
       responses:
         "200":
           description: Export file stream.
@@ -670,7 +687,11 @@ paths:
               manualKeywordCrawl:
                 value:
                   runMode: deep_sentiment
-                  targetDate: "2026-05-22"
+                  startDate: "2026-05-20"
+                  endDate: "2026-05-22"
+                  schedule:
+                    mode: daily
+                    timezone: Asia/Shanghai
                   platforms: [wb, xhs]
                   keywords: [养老服务, 医保支付]
                   keywordSource: manual
@@ -702,6 +723,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CrawlerTaskResponse"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Crawlers]
+      summary: Delete a crawler task and its persisted task events.
+      operationId: deleteCrawlerTask
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "204":
+          description: Crawler task deleted.
         default:
           $ref: "#/components/responses/Error"
 
@@ -1329,6 +1362,7 @@ components:
       properties:
         id:
           type: string
+          description: "Template identifier. The virtual `auto` template asks the engine to choose one automatically."
         name:
           type: string
         filename:
@@ -1366,6 +1400,57 @@ components:
           type: array
           items:
             type: string
+        orchestration:
+          $ref: "#/components/schemas/ReportOrchestrationScope"
+
+    ReportOrchestrationScope:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          default: true
+        mode:
+          type: string
+          example: multi_engine
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        workspacePath:
+          type: string
+          description: Per-report workspace used for Query, Media, Insight, Forum, and Report artifacts.
+        engines:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              artifactPath:
+                type: string
+              startedAt:
+                type: string
+                format: date-time
+              completedAt:
+                type: string
+                format: date-time
+              error:
+                type: string
+        forum:
+          type: object
+          properties:
+            status:
+              type: string
+            artifactPath:
+              type: string
+            completedAt:
+              type: string
+              format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
 
     CreateReportTaskRequest:
       type: object
@@ -1376,6 +1461,8 @@ components:
           minLength: 1
         templateId:
           type: string
+          default: auto
+          description: "Use `auto` or omit the field to let the Report Engine select the best template automatically."
         customTemplate:
           type: string
         sourceScope:
@@ -1409,9 +1496,10 @@ components:
               maximum: 100
             stage:
               type: string
-              enum: [queued, prepare, io_ready, data_loaded, agent_running, retry_wait, persist, completed, failed]
+              enum: [queued, prepare, io_ready, orchestrating, forum_running, data_loaded, agent_running, retry_wait, persist, completed, failed]
             templateId:
               type: string
+              description: "`auto` means the Report Engine will select the template during generation."
             sourceScope:
               $ref: "#/components/schemas/ReportSourceScope"
             artifacts:
@@ -1538,6 +1626,11 @@ components:
         timezone:
           type: string
           default: Asia/Shanghai
+
+    CrawlerSentiment:
+      type: string
+      enum: [positive, neutral, negative, unknown]
+      description: Normalized sentiment of the crawled content.
 
     PlatformPolicyInput:
       type: object
@@ -1894,6 +1987,8 @@ components:
           oneOf:
             - type: string
             - type: number
+        sentiment:
+          $ref: "#/components/schemas/CrawlerSentiment"
         metrics:
           type: object
           additionalProperties: true
@@ -1941,6 +2036,16 @@ components:
         targetDate:
           type: string
           format: date
+          deprecated: true
+          description: Backward-compatible single-day crawl date. Prefer startDate and endDate.
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        schedule:
+          $ref: "#/components/schemas/CrawlFrequency"
         platforms:
           type: array
           minItems: 1
@@ -1996,6 +2101,15 @@ components:
             targetDate:
               type: string
               format: date
+              deprecated: true
+            startDate:
+              type: string
+              format: date
+            endDate:
+              type: string
+              format: date
+            schedule:
+              $ref: "#/components/schemas/CrawlFrequency"
             platforms:
               type: array
               items:

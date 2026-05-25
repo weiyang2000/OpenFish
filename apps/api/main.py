@@ -73,8 +73,8 @@ def create_app(
     app.state.account_service = account_service
     app.state.crawler_data_service = CrawlerDataService(store, root)
     app.state.platform_service = PlatformService(store, account_service)
-    app.state.task_service = TaskService(store, artifacts, workers_enabled)
-    app.state.engine_facade = EngineFacade(root)
+    app.state.task_service = TaskService(store, artifacts, workers_enabled, root)
+    app.state.engine_facade = EngineFacade(root, workers_enabled)
 
     register_error_handlers(app)
     app.include_router(build_router())
@@ -249,6 +249,15 @@ def build_router() -> APIRouter:
         workspace_id: str = Depends(workspace_header),
     ) -> dict[str, Any]:
         return {"success": True, "task": request.app.state.task_service.get_report_task(workspace_id, task_id)}
+
+    @router.delete("/report-tasks/{task_id}", status_code=204)
+    def delete_report_task(
+        task_id: str,
+        request: Request,
+        workspace_id: str = Depends(workspace_header),
+    ) -> Response:
+        request.app.state.task_service.delete_report_task(workspace_id, task_id)
+        return Response(status_code=204)
 
     @router.get("/report-tasks/{task_id}/events")
     def stream_report_events(
@@ -469,6 +478,15 @@ def build_router() -> APIRouter:
     ) -> dict[str, Any]:
         return {"success": True, "task": request.app.state.task_service.get_crawler_task(workspace_id, task_id)}
 
+    @router.delete("/crawler-tasks/{task_id}", status_code=204)
+    def delete_crawler_task(
+        task_id: str,
+        request: Request,
+        workspace_id: str = Depends(workspace_header),
+    ) -> Response:
+        request.app.state.task_service.delete_crawler_task(workspace_id, task_id)
+        return Response(status_code=204)
+
     @router.get("/crawler-tasks/{task_id}/logs")
     def list_crawler_task_logs(
         task_id: str,
@@ -583,8 +601,14 @@ def build_router() -> APIRouter:
     return router
 
 
-def workspace_header(x_workspace_id: str = Header(..., alias="X-Workspace-Id")) -> str:
-    return x_workspace_id
+def workspace_header(
+    x_workspace_id: str | None = Header(None, alias="X-Workspace-Id"),
+    workspace_id: str | None = Query(None, alias="workspaceId"),
+) -> str:
+    resolved = x_workspace_id or workspace_id
+    if not resolved:
+        raise ApiError("VALIDATION_ERROR", "X-Workspace-Id header is required", status_code=422)
+    return resolved
 
 
 def error_response(code: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:

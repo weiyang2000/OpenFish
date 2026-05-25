@@ -47,6 +47,24 @@ TABLE_SPECS = (
     TableSpec("zhihu", "comment", "zhihu_comment", "comment_id", None, "content", "user_nickname", None, None, "publish_time", "add_ts", "like_count", "sub_comment_count"),
 )
 
+SENTIMENT_COLUMNS = (
+    "sentiment",
+    "sentiment_label",
+    "sentiment_type",
+    "emotion",
+    "emotion_label",
+    "polarity",
+)
+SENTIMENT_SCORE_COLUMNS = (
+    "sentiment_score",
+    "emotion_score",
+    "polarity_score",
+    "score",
+)
+POSITIVE_SENTIMENTS = {"positive", "pos", "+", "1", "正向", "正面", "积极", "支持", "满意", "赞同", "利好"}
+NEGATIVE_SENTIMENTS = {"negative", "neg", "-", "-1", "负向", "负面", "消极", "反对", "不满", "愤怒", "利空"}
+NEUTRAL_SENTIMENTS = {"neutral", "neu", "0", "中性", "一般", "客观"}
+
 
 class CrawlerDataService:
     def __init__(self, store: Store, repo_root: str | Path):
@@ -192,6 +210,7 @@ class CrawlerDataService:
                             spec.like_count,
                             spec.comment_count,
                         ) if column),
+                        *self._sentiment_columns(columns),
                     }
                     & columns
                 )
@@ -285,6 +304,7 @@ class CrawlerDataService:
                     spec.like_count,
                     spec.comment_count,
                 ) if column),
+                *self._sentiment_columns(columns),
             }
             & columns
         )
@@ -320,7 +340,15 @@ class CrawlerDataService:
         return [self._record_from_row(spec, dict(row)) for row in rows]
 
     @staticmethod
-    def _record_from_row(spec: TableSpec, row: dict[str, Any]) -> dict[str, Any]:
+    def _sentiment_columns(columns: set[str]) -> set[str]:
+        return {
+            column
+            for column in (*SENTIMENT_COLUMNS, *SENTIMENT_SCORE_COLUMNS)
+            if column in columns
+        }
+
+    @classmethod
+    def _record_from_row(cls, spec: TableSpec, row: dict[str, Any]) -> dict[str, Any]:
         body = row.get(spec.body or "") or ""
         title = row.get(spec.title or "") or ""
         scraped_at = row.get(spec.scraped_at or "") or row.get(spec.created_at or "")
@@ -337,12 +365,70 @@ class CrawlerDataService:
             "url": row.get(spec.url or "") or "",
             "createdAt": row.get(spec.created_at or "") or "",
             "scrapedAt": scraped_at or "",
+            "sentiment": cls._extract_sentiment(row),
             "metrics": {
                 "likes": row.get(spec.like_count or "") or "",
                 "comments": row.get(spec.comment_count or "") or "",
             },
             "sortValue": str(scraped_at or row.get("id") or ""),
         }
+
+    @classmethod
+    def _extract_sentiment(cls, row: dict[str, Any]) -> str:
+        label = next(
+            (
+                row.get(column)
+                for column in SENTIMENT_COLUMNS
+                if row.get(column) not in (None, "")
+            ),
+            None,
+        )
+        normalized = cls._normalize_sentiment(label)
+        if normalized != "unknown":
+            return normalized
+
+        score = next(
+            (
+                cls._to_float(row.get(column))
+                for column in SENTIMENT_SCORE_COLUMNS
+                if cls._to_float(row.get(column)) is not None
+            ),
+            None,
+        )
+        if score is None:
+            return "unknown"
+        if score > 0.2:
+            return "positive"
+        if score < -0.2:
+            return "negative"
+        return "neutral"
+
+    @staticmethod
+    def _normalize_sentiment(value: Any) -> str:
+        if value in (None, ""):
+            return "unknown"
+        text = str(value).strip().lower()
+        if text in POSITIVE_SENTIMENTS:
+            return "positive"
+        if text in NEGATIVE_SENTIMENTS:
+            return "negative"
+        if text in NEUTRAL_SENTIMENTS:
+            return "neutral"
+        numeric = CrawlerDataService._to_float(value)
+        if numeric is None:
+            return "unknown"
+        if numeric > 0.2:
+            return "positive"
+        if numeric < -0.2:
+            return "negative"
+        return "neutral"
+
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _summary(records: list[dict[str, Any]]) -> dict[str, Any]:
