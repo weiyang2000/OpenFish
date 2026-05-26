@@ -25,6 +25,7 @@
 from typing import List
 
 import config
+from tools import date_filter
 from var import source_keyword_var
 
 from ._store_impl import *
@@ -51,10 +52,13 @@ class KuaishouStoreFactory:
 
 
 async def update_kuaishou_video(video_item: Dict):
+    if not date_filter.should_keep_content("ks", video_item):
+        utils.logger.info("[store.kuaishou.update_kuaishou_video] skip video outside configured date range")
+        return False
     photo_info: Dict = video_item.get("photo", {})
     video_id = photo_info.get("id")
     if not video_id:
-        return
+        return False
     user_info = video_item.get("author", {})
     save_content_item = {
         "video_id": video_id,
@@ -76,6 +80,7 @@ async def update_kuaishou_video(video_item: Dict):
     utils.logger.info(
         f"[store.kuaishou.update_kuaishou_video] Kuaishou video id:{video_id}, title:{save_content_item.get('title')}")
     await KuaishouStoreFactory.create_store().store_content(content_item=save_content_item)
+    return True
 
 
 async def batch_update_ks_video_comments(video_id: str, comments: List[Dict]):
@@ -87,6 +92,9 @@ async def batch_update_ks_video_comments(video_id: str, comments: List[Dict]):
 
 
 async def update_ks_video_comment(video_id: str, comment_item: Dict):
+    if not date_filter.should_keep_comment("ks", comment_item):
+        utils.logger.info("[store.kuaishou.update_ks_video_comment] skip comment outside configured date range")
+        return False
     # V2 API uses snake_case field names and comment_id is int type
     # Old GraphQL API used camelCase field names
     # Support both formats for backward compatibility
@@ -108,6 +116,7 @@ async def update_ks_video_comment(video_id: str, comment_item: Dict):
     utils.logger.info(
         f"[store.kuaishou.update_ks_video_comment] Kuaishou video comment: {comment_id}, content: {save_comment_item.get('content')}")
     await KuaishouStoreFactory.create_store().store_comment(comment_item=save_comment_item)
+    return True
 
 async def save_creator(user_id: str, creator: Dict):
     ownerCount = creator.get('ownerCount', {})

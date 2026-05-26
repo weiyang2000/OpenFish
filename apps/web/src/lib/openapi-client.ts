@@ -51,6 +51,7 @@ export const OPENAPI_PATHS = {
   reportTaskLogs: (id: string) => `/report-tasks/${id}/logs`,
   crawlerStrategies: "/crawler-strategies",
   crawlerAccounts: "/crawler-accounts",
+  crawlerAccount: (id: string) => `/crawler-accounts/${encodeURIComponent(id)}`,
   crawlerAccountLoginSessions: "/crawler-accounts/login-sessions",
   crawlerAccountLoginSession: (id: string) => `/crawler-accounts/login-sessions/${id}`,
   crawlerData: "/crawler-data",
@@ -255,6 +256,15 @@ export async function createReportTask(input: CreateReportTaskInput): Promise<Re
   return task;
 }
 
+export async function listReportTasks(): Promise<ReportTask[]> {
+  if (!USE_MOCKS) {
+    const response = await requestJson<{ tasks: ReportTask[] }>(OPENAPI_PATHS.reportTasks);
+    return response.tasks.map(normalizeReportTask);
+  }
+
+  return reportTasks.map(normalizeReportTask);
+}
+
 export async function cancelReportTask(taskId: string): Promise<ReportTask> {
   if (!USE_MOCKS) {
     const response = await requestJson<{ task: ReportTask }>(OPENAPI_PATHS.reportTaskCancel(taskId), {
@@ -328,7 +338,7 @@ export async function createCrawlerTask(input: CreateCrawlerTaskInput): Promise<
   const task: CrawlerTask = {
     id: nextId("crawler"),
     workspaceId,
-    runMode: input.runMode,
+    runMode: input.runMode ?? "deep_sentiment",
     status: schedule.mode === "manual" ? "queued" : "pending",
     progress: 0,
     strategyId: input.strategyId,
@@ -336,9 +346,10 @@ export async function createCrawlerTask(input: CreateCrawlerTaskInput): Promise<
     startDate,
     endDate,
     schedule,
+    crawlDepth: input.crawlDepth ?? 3,
     platforms: input.platforms,
     keywords: input.keywords,
-    keywordSource: input.keywordSource,
+    keywordSource: input.keywordSource ?? "manual",
     stats: {
       totalKeywords: input.keywords.length,
       totalPlatforms: input.platforms.length,
@@ -357,6 +368,15 @@ export async function createCrawlerTask(input: CreateCrawlerTaskInput): Promise<
   return task;
 }
 
+export async function listCrawlerTasks(): Promise<CrawlerTask[]> {
+  if (!USE_MOCKS) {
+    const response = await requestJson<{ tasks: CrawlerTask[] }>(OPENAPI_PATHS.crawlerTasks);
+    return response.tasks;
+  }
+
+  return [...crawlerTasks];
+}
+
 export async function deleteCrawlerTask(taskId: string): Promise<void> {
   if (!USE_MOCKS) {
     await requestJson<void>(OPENAPI_PATHS.crawlerTaskDelete(taskId), {
@@ -368,6 +388,19 @@ export async function deleteCrawlerTask(taskId: string): Promise<void> {
   const index = crawlerTasks.findIndex((item) => item.id === taskId);
   if (index >= 0) crawlerTasks.splice(index, 1);
   addLog("crawler", `Crawler task ${taskId} deleted`, taskId);
+}
+
+export async function deleteCrawlerAccount(accountId: string): Promise<void> {
+  if (!USE_MOCKS) {
+    await requestJson<void>(OPENAPI_PATHS.crawlerAccount(accountId), {
+      method: "DELETE"
+    });
+    return;
+  }
+
+  const index = crawlerAccounts.findIndex((item) => item.id === accountId || item.accountId === accountId);
+  if (index >= 0) crawlerAccounts.splice(index, 1);
+  addLog("crawler", `Crawler account ${accountId} deleted`);
 }
 
 export async function stopCrawlerTask(taskId: string): Promise<CrawlerTask> {
@@ -503,6 +536,7 @@ export async function listCrawlerData(params: {
   platform?: PlatformId | "all";
   contentType?: "content" | "comment" | "all";
   q?: string;
+  page?: number;
   pageSize?: number;
 } = {}): Promise<CrawlerDataPage> {
   if (!USE_MOCKS) {
@@ -510,17 +544,21 @@ export async function listCrawlerData(params: {
     if (params.platform && params.platform !== "all") query.set("platform", params.platform);
     if (params.contentType && params.contentType !== "all") query.set("contentType", params.contentType);
     if (params.q) query.set("q", params.q);
+    if (params.page) query.set("page", String(params.page));
     if (params.pageSize) query.set("pageSize", String(params.pageSize));
     const path = `${OPENAPI_PATHS.crawlerData}${query.toString() ? `?${query.toString()}` : ""}`;
     const response = await requestJson<CrawlerDataPage & { success: boolean }>(path);
     return {
       records: response.records,
       summary: response.summary,
+      pageInfo: response.pageInfo,
       source: response.source,
       message: response.message
     };
   }
 
+  const page = Math.max(1, params.page ?? 1);
+  const pageSize = Math.max(1, params.pageSize ?? 50);
   const needle = params.q?.trim().toLowerCase();
   const records = crawlerDataRecords.filter((record) => {
     const platformMatches = !params.platform || params.platform === "all" || record.platformId === params.platform;
@@ -530,8 +568,10 @@ export async function listCrawlerData(params: {
     const queryMatches = !needle || text.includes(needle);
     return platformMatches && typeMatches && queryMatches;
   });
+  const totalPages = records.length === 0 ? 0 : Math.ceil(records.length / pageSize);
+  const pageRecords = records.slice((page - 1) * pageSize, page * pageSize);
   return {
-    records,
+    records: pageRecords,
     summary: {
       totalRecords: records.length,
       byPlatform: records.reduce<Record<string, number>>((acc, record) => {
@@ -542,6 +582,14 @@ export async function listCrawlerData(params: {
         acc[record.contentType] = (acc[record.contentType] ?? 0) + 1;
         return acc;
       }, {})
+    },
+    pageInfo: {
+      page,
+      pageSize,
+      totalRecords: records.length,
+      totalPages,
+      hasPreviousPage: page > 1 && totalPages > 0,
+      hasNextPage: totalPages > 0 && page < totalPages
     }
   };
 }
@@ -574,6 +622,45 @@ export async function deleteCrawlerDataRecord(
   if (index < 0) throw new Error("Crawler data record not found");
   crawlerDataRecords.splice(index, 1);
   addLog("crawler", `Crawler data ${record.tableName}:${record.sourceId} deleted`);
+}
+
+export async function deleteCrawlerDataRecords(
+  records: Array<Pick<CrawlerDataRecord, "tableName" | "sourceId" | "platformId" | "contentType">>
+): Promise<{ deleted: number }> {
+  if (records.length === 0) return { deleted: 0 };
+  if (!USE_MOCKS) {
+    const response = await requestJson<{ success: boolean; deleted: number }>(
+      `${OPENAPI_PATHS.crawlerData}:delete`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          records: records.map((record) => ({
+            tableName: record.tableName,
+            sourceId: record.sourceId,
+            platform: record.platformId,
+            contentType: record.contentType
+          }))
+        })
+      }
+    );
+    if (!response.success || response.deleted < 1) {
+      throw new Error("Crawler data records not deleted");
+    }
+    return { deleted: response.deleted };
+  }
+
+  const keys = new Set(records.map((record) => `${record.tableName}:${record.sourceId}`));
+  let deleted = 0;
+  for (let index = crawlerDataRecords.length - 1; index >= 0; index -= 1) {
+    const record = crawlerDataRecords[index];
+    if (keys.has(`${record.tableName}:${record.sourceId}`)) {
+      crawlerDataRecords.splice(index, 1);
+      deleted += 1;
+    }
+  }
+  if (deleted < 1) throw new Error("Crawler data records not found");
+  addLog("crawler", `${deleted} crawler data records deleted`);
+  return { deleted };
 }
 
 export async function updatePlatformPolicy(

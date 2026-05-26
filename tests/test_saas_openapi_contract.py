@@ -360,16 +360,22 @@ def test_real_crawler_adapter_invokes_keyword_platform_api(
             platforms: list[str],
             *,
             login_type: str,
+            crawl_depth: int,
             max_notes_per_keyword: int,
             headless: bool,
+            start_date: str | None,
+            end_date: str | None,
         ) -> dict[str, Any]:
             calls.append(
                 {
                     "keywords": keywords,
                     "platforms": platforms,
                     "loginType": login_type,
+                    "crawlDepth": crawl_depth,
                     "maxNotesPerKeyword": max_notes_per_keyword,
                     "headless": headless,
+                    "startDate": start_date,
+                    "endDate": end_date,
                 }
             )
             return {
@@ -409,8 +415,11 @@ def test_real_crawler_adapter_invokes_keyword_platform_api(
             "keywords": ["养老服务", "医保支付"],
             "platforms": ["wb", "xhs"],
             "loginType": "phone",
+            "crawlDepth": 3,
             "maxNotesPerKeyword": 7,
             "headless": False,
+            "startDate": "2026-05-20",
+            "endDate": "2026-05-22",
         }
     )
 
@@ -419,8 +428,11 @@ def test_real_crawler_adapter_invokes_keyword_platform_api(
             "keywords": ["养老服务", "医保支付"],
             "platforms": ["wb", "xhs"],
             "loginType": "phone",
+            "crawlDepth": 3,
             "maxNotesPerKeyword": 7,
             "headless": False,
+            "startDate": "2026-05-20",
+            "endDate": "2026-05-22",
         }
     ]
     assert stats["totalKeywords"] == 2

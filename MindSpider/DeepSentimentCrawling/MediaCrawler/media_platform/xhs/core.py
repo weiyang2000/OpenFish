@@ -29,7 +29,7 @@ from config import CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES
 from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
-from tools import utils
+from tools import date_filter, utils
 from tools.cloak_browser import launch_cloak_browser_context
 from var import crawler_type_var, source_keyword_var
 
@@ -100,15 +100,15 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """Search for notes and retrieve their comment information."""
         utils.logger.info("[XiaoHongShuCrawler.search] Begin search Xiaohongshu keywords")
         xhs_limit_count = 20  # Xiaohongshu limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
+        max_notes = max(0, int(config.CRAWLER_MAX_NOTES_COUNT))
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[XiaoHongShuCrawler.search] Current search keyword: {keyword}")
             page = 1
+            accepted_count = 0
             search_id = get_search_id()
-            while (page - start_page + 1) * xhs_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            while accepted_count < max_notes:
                 if page < start_page:
                     utils.logger.info(f"[XiaoHongShuCrawler.search] Skip page {page}")
                     page += 1
@@ -138,9 +138,14 @@ class XiaoHongShuCrawler(AbstractCrawler):
                         ) for post_item in notes_res.get("items", {}) if post_item.get("model_type") not in ("rec_query", "hot_query")
                     ]
                     note_details = await asyncio.gather(*task_list)
+                    if not date_filter.has_new_time_records("xhs", "content", [item for item in note_details if item]):
+                        utils.logger.info("[XiaoHongShuCrawler.search] No new-time notes before filtering, stop crawling")
+                        break
                     for note_detail in note_details:
-                        if note_detail:
-                            await xhs_store.update_xhs_note(note_detail)
+                        if note_detail and accepted_count < max_notes:
+                            if not await xhs_store.update_xhs_note(note_detail):
+                                continue
+                            accepted_count += 1
                             await self.get_notice_media(note_detail)
                             note_ids.append(note_detail.get("note_id"))
                             xsec_tokens.append(note_detail.get("xsec_token"))

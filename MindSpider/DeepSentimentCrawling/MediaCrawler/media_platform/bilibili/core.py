@@ -33,7 +33,7 @@ import config
 from base.base_crawler import AbstractCrawler
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import bilibili as bilibili_store
-from tools import utils
+from tools import date_filter, utils
 from tools.cloak_browser import launch_cloak_browser_context
 from var import crawler_type_var, source_keyword_var
 
@@ -160,14 +160,14 @@ class BilibiliCrawler(AbstractCrawler):
         """
         utils.logger.info("[BilibiliCrawler.search_by_keywords] Begin search bilibli keywords")
         bili_limit_count = 20  # bilibili limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < bili_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = bili_limit_count
+        max_notes = max(0, int(config.CRAWLER_MAX_NOTES_COUNT))
         start_page = config.START_PAGE  # start page number
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Current search keyword: {keyword}")
             page = 1
-            while (page - start_page + 1) * bili_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            accepted_count = 0
+            while accepted_count < max_notes:
                 if page < start_page:
                     utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Skip page: {page}")
                     page += 1
@@ -196,10 +196,15 @@ class BilibiliCrawler(AbstractCrawler):
                 except Exception as e:
                     utils.logger.warning(f"[BilibiliCrawler.search_by_keywords] error in the task list. The video for this page will not be included. {e}")
                 video_items = await asyncio.gather(*task_list)
+                if not date_filter.has_new_time_records("bili", "content", [item for item in video_items if item]):
+                    utils.logger.info("[BilibiliCrawler.search_by_keywords] No new-time videos before filtering, stop crawling")
+                    break
                 for video_item in video_items:
-                    if video_item:
+                    if video_item and accepted_count < max_notes:
+                        if not await bilibili_store.update_bilibili_video(video_item):
+                            continue
+                        accepted_count += 1
                         video_id_list.append(video_item.get("View").get("aid"))
-                        await bilibili_store.update_bilibili_video(video_item)
                         await bilibili_store.update_up_info(video_item)
                         await self.get_bilibili_video(video_item, semaphore)
                 page += 1
@@ -267,6 +272,9 @@ class BilibiliCrawler(AbstractCrawler):
                         semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
                         task_list = [self.get_video_info_task(aid=video_item.get("aid"), bvid="", semaphore=semaphore) for video_item in video_list]
                         video_items = await asyncio.gather(*task_list)
+                        if not date_filter.has_new_time_records("bili", "content", [item for item in video_items if item]):
+                            utils.logger.info("[BilibiliCrawler.search_by_keywords_in_time_range] No new-time videos before filtering, stop crawling")
+                            break
 
                         for video_item in video_items:
                             if video_item:
@@ -276,10 +284,11 @@ class BilibiliCrawler(AbstractCrawler):
                                     break
                                 if notes_count_this_day >= config.MAX_NOTES_PER_DAY:
                                     break
+                                if not await bilibili_store.update_bilibili_video(video_item):
+                                    continue
                                 notes_count_this_day += 1
                                 total_notes_crawled_for_keyword += 1
                                 video_id_list.append(video_item.get("View").get("aid"))
-                                await bilibili_store.update_bilibili_video(video_item)
                                 await bilibili_store.update_up_info(video_item)
                                 await self.get_bilibili_video(video_item, semaphore)
 

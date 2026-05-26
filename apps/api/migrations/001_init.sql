@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS crawler_tasks (
     platforms_json TEXT NOT NULL DEFAULT '[]',
     keywords_json TEXT NOT NULL DEFAULT '[]',
     keyword_source TEXT NOT NULL DEFAULT 'manual',
+    crawl_depth INTEGER NOT NULL DEFAULT 3,
     max_notes_per_keyword INTEGER NOT NULL DEFAULT 50,
     max_comments_per_note INTEGER NOT NULL DEFAULT 100,
     login_type TEXT,

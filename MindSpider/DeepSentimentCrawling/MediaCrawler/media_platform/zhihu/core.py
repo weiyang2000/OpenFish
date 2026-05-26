@@ -30,7 +30,7 @@ from base.base_crawler import AbstractCrawler
 from model.m_zhihu import ZhihuContent, ZhihuCreator
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import zhihu as zhihu_store
-from tools import utils
+from tools import date_filter, utils
 from tools.cloak_browser import launch_cloak_browser_context
 from var import crawler_type_var, source_keyword_var
 
@@ -122,8 +122,7 @@ class ZhihuCrawler(AbstractCrawler):
         """Search for notes and retrieve their comment information."""
         utils.logger.info("[ZhihuCrawler.search] Begin search zhihu keywords")
         zhihu_limit_count = 20  # zhihu limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < zhihu_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = zhihu_limit_count
+        max_notes = max(0, int(config.CRAWLER_MAX_NOTES_COUNT))
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
@@ -131,9 +130,8 @@ class ZhihuCrawler(AbstractCrawler):
                 f"[ZhihuCrawler.search] Current search keyword: {keyword}"
             )
             page = 1
-            while (
-                page - start_page + 1
-            ) * zhihu_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            accepted_count = 0
+            while accepted_count < max_notes:
                 if page < start_page:
                     utils.logger.info(f"[ZhihuCrawler.search] Skip page {page}")
                     page += 1
@@ -155,16 +153,25 @@ class ZhihuCrawler(AbstractCrawler):
                     if not content_list:
                         utils.logger.info("No more content!")
                         break
+                    if not date_filter.has_new_time_records("zhihu", "content", content_list):
+                        utils.logger.info("[ZhihuCrawler.search] No new-time contents before filtering, stop crawling")
+                        break
 
                     # Sleep after page navigation
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                     utils.logger.info(f"[ZhihuCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
 
                     page += 1
+                    accepted_content_list: List[ZhihuContent] = []
                     for content in content_list:
-                        await zhihu_store.update_zhihu_content(content)
+                        if accepted_count >= max_notes:
+                            break
+                        if not await zhihu_store.update_zhihu_content(content):
+                            continue
+                        accepted_count += 1
+                        accepted_content_list.append(content)
 
-                    await self.batch_get_content_comments(content_list)
+                    await self.batch_get_content_comments(accepted_content_list)
                 except DataFetchError:
                     utils.logger.error("[ZhihuCrawler.search] Search content error")
                     return

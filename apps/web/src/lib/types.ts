@@ -179,6 +179,7 @@ export interface CrawlerTask {
   startDate?: string;
   endDate?: string;
   schedule?: CrawlFrequency;
+  crawlDepth: number;
   platforms: PlatformId[];
   keywords: string[];
   keywordSource: CrawlerTaskKeywordSource;
@@ -370,9 +371,19 @@ export interface CrawlerDataSummary {
   byType: Partial<Record<"content" | "comment", number>>;
 }
 
+export interface PageInfo {
+  page: number;
+  pageSize: number;
+  totalRecords: number;
+  totalPages: number;
+  hasPreviousPage: boolean;
+  hasNextPage: boolean;
+}
+
 export interface CrawlerDataPage {
   records: CrawlerDataRecord[];
   summary: CrawlerDataSummary;
+  pageInfo: PageInfo;
   source?: string;
   message?: string;
 }
@@ -412,14 +423,15 @@ export interface RerunReportTaskInput {
 
 export interface CreateCrawlerTaskInput {
   strategyId?: string;
-  runMode: RunMode;
+  runMode?: RunMode;
   targetDate?: string;
   startDate?: string;
   endDate?: string;
   schedule?: CrawlFrequency;
   platforms: PlatformId[];
   keywords: string[];
-  keywordSource: CrawlerTaskKeywordSource;
+  crawlDepth?: number;
+  keywordSource?: CrawlerTaskKeywordSource;
   maxNotesPerKeyword?: number;
   maxCommentsPerNote?: number;
   loginType?: CrawlerLoginType;

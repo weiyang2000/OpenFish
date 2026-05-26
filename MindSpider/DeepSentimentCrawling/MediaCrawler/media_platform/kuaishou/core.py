@@ -29,7 +29,7 @@ from base.base_crawler import AbstractCrawler
 from model.m_kuaishou import VideoUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import kuaishou as kuaishou_store
-from tools import utils
+from tools import date_filter, utils
 from tools.cloak_browser import launch_cloak_browser_context
 from var import comment_tasks_var, crawler_type_var, source_keyword_var
 
@@ -103,8 +103,7 @@ class KuaishouCrawler(AbstractCrawler):
     async def search(self):
         utils.logger.info("[KuaishouCrawler.search] Begin search kuaishou keywords")
         ks_limit_count = 20  # kuaishou limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < ks_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = ks_limit_count
+        max_notes = max(0, int(config.CRAWLER_MAX_NOTES_COUNT))
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             search_session_id = ""
@@ -113,9 +112,8 @@ class KuaishouCrawler(AbstractCrawler):
                 f"[KuaishouCrawler.search] Current search keyword: {keyword}"
             )
             page = 1
-            while (
-                page - start_page + 1
-            ) * ks_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            accepted_count = 0
+            while accepted_count < max_notes:
                 if page < start_page:
                     utils.logger.info(f"[KuaishouCrawler.search] Skip page: {page}")
                     page += 1
@@ -133,18 +131,29 @@ class KuaishouCrawler(AbstractCrawler):
                     utils.logger.error(
                         f"[KuaishouCrawler.search] search info by keyword:{keyword} not found data"
                     )
-                    continue
+                    break
 
                 vision_search_photo: Dict = videos_res.get("visionSearchPhoto")
                 if vision_search_photo.get("result") != 1:
                     utils.logger.error(
                         f"[KuaishouCrawler.search] search info by keyword:{keyword} not found data "
                     )
-                    continue
+                    break
                 search_session_id = vision_search_photo.get("searchSessionId", "")
-                for video_detail in vision_search_photo.get("feeds"):
+                feeds = vision_search_photo.get("feeds") or []
+                if not feeds:
+                    utils.logger.info(f"[KuaishouCrawler.search] No more videos for keyword: {keyword}")
+                    break
+                if not date_filter.has_new_time_records("ks", "content", feeds):
+                    utils.logger.info("[KuaishouCrawler.search] No new-time videos before filtering, stop crawling")
+                    break
+                for video_detail in feeds:
+                    if accepted_count >= max_notes:
+                        break
+                    if not await kuaishou_store.update_kuaishou_video(video_item=video_detail):
+                        continue
+                    accepted_count += 1
                     video_id_list.append(video_detail.get("photo", {}).get("id"))
-                    await kuaishou_store.update_kuaishou_video(video_item=video_detail)
 
                 # batch fetch video comments
                 page += 1

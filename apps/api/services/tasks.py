@@ -450,10 +450,10 @@ class TaskService:
                 id, workspace_id, strategy_id, run_mode, target_date,
                 start_date, end_date, schedule_json,
                 platforms_json, keywords_json, keyword_source,
-                max_notes_per_keyword, max_comments_per_note, login_type,
+                crawl_depth, max_notes_per_keyword, max_comments_per_note, login_type,
                 headless, overrides_json, status, progress, stats_json,
                 owner_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -467,6 +467,7 @@ class TaskService:
                 dumps(payload.platforms),
                 dumps(payload.keywords),
                 payload.keywordSource,
+                payload.crawlDepth,
                 payload.maxNotesPerKeyword
                 if payload.maxNotesPerKeyword is not None
                 else 50,
@@ -1324,8 +1325,11 @@ class TaskService:
             task["keywords"],
             task["platforms"],
             login_type=login_type,
+            crawl_depth=task.get("crawlDepth") or 3,
             max_notes_per_keyword=task.get("maxNotesPerKeyword") or 50,
             headless=task.get("headless") is not False,
+            start_date=task.get("startDate") or task.get("targetDate"),
+            end_date=task.get("endDate") or task.get("targetDate"),
         )
         return self._real_crawler_stats_to_api(result)
 
@@ -1383,19 +1387,37 @@ class TaskService:
     ) -> list[str]:
         missing = []
         for platform in platforms:
-            row = self.store.query_one(
+            rows = self.store.query_all(
                 """
-                SELECT id
+                SELECT id, details_json
                 FROM crawler_accounts
                 WHERE workspace_id = ? AND platform_id = ? AND status = 'active'
                 ORDER BY updated_at DESC
-                LIMIT 1
+                LIMIT 20
                 """,
                 (workspace_id, platform),
             )
-            if not row:
+            if not any(self._active_account_has_login_state(platform, row) for row in rows):
                 missing.append(platform)
         return missing
+
+    @staticmethod
+    def _active_account_has_login_state(platform: str, row: dict[str, Any]) -> bool:
+        details = loads(row.get("details_json"), {})
+        if not isinstance(details, dict):
+            return True
+
+        state_names = details.get("loginStateNames")
+        if not isinstance(state_names, list):
+            state_names = details.get("stateNames")
+        if not isinstance(state_names, list):
+            return True
+
+        from apps.api.services.accounts import PLATFORM_LOGIN_MARKERS
+
+        required = set(PLATFORM_LOGIN_MARKERS.get(platform, ()))
+        observed = {str(name) for name in state_names}
+        return bool(required & observed)
 
     @staticmethod
     def _real_crawler_stats_to_api(result: dict[str, Any]) -> dict[str, Any]:
@@ -1595,6 +1617,7 @@ class TaskService:
             "platforms": loads(row["platforms_json"], []),
             "keywords": loads(row["keywords_json"], []),
             "keywordSource": row["keyword_source"],
+            "crawlDepth": row.get("crawl_depth") or 3,
             "maxNotesPerKeyword": row["max_notes_per_keyword"],
             "maxCommentsPerNote": row["max_comments_per_note"],
             "loginType": row["login_type"],

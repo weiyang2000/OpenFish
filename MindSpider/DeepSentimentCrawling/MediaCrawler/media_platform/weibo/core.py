@@ -31,7 +31,7 @@ import config
 from base.base_crawler import AbstractCrawler
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import weibo as weibo_store
-from tools import utils
+from tools import date_filter, utils
 from tools.cloak_browser import launch_cloak_browser_context
 from var import crawler_type_var, source_keyword_var
 
@@ -115,8 +115,7 @@ class WeiboCrawler(AbstractCrawler):
         """
         utils.logger.info("[WeiboCrawler.search] Begin search weibo keywords")
         weibo_limit_count = 10  # weibo limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < weibo_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = weibo_limit_count
+        max_notes = max(0, int(config.CRAWLER_MAX_NOTES_COUNT))
         start_page = config.START_PAGE
 
         # Set the search type based on the configuration for weibo
@@ -136,7 +135,8 @@ class WeiboCrawler(AbstractCrawler):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[WeiboCrawler.search] Current search keyword: {keyword}")
             page = 1
-            while (page - start_page + 1) * weibo_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            accepted_count = 0
+            while accepted_count < max_notes:
                 if page < start_page:
                     utils.logger.info(f"[WeiboCrawler.search] Skip page: {page}")
                     page += 1
@@ -147,12 +147,22 @@ class WeiboCrawler(AbstractCrawler):
                 note_list = filter_search_result_card(search_res.get("cards"))
                 # If full text fetching is enabled, batch get full text of posts
                 note_list = await self.batch_get_notes_full_text(note_list)
+                if not note_list:
+                    utils.logger.info(f"[WeiboCrawler.search] No more notes for keyword: {keyword}")
+                    break
+                if not date_filter.has_new_time_records("wb", "content", note_list):
+                    utils.logger.info("[WeiboCrawler.search] No new-time notes before filtering, stop crawling")
+                    break
                 for note_item in note_list:
+                    if accepted_count >= max_notes:
+                        break
                     if note_item:
                         mblog: Dict = note_item.get("mblog")
                         if mblog:
+                            if not await weibo_store.update_weibo_note(note_item):
+                                continue
+                            accepted_count += 1
                             note_id_list.append(mblog.get("id"))
-                            await weibo_store.update_weibo_note(note_item)
                             await self.get_note_images(mblog)
 
                 page += 1

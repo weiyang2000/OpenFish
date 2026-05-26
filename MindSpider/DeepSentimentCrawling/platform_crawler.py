@@ -9,7 +9,7 @@ import os
 import sys
 import subprocess
 import threading
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, List, Dict, Optional
 import json
@@ -52,6 +52,25 @@ COOKIE_LOGIN_FAILURE_MARKERS = (
 )
 
 CrawlerLogCallback = Callable[[str, str], None]
+
+
+class _temporary_environ:
+    def __init__(self, values: Dict[str, str]) -> None:
+        self.values = values
+        self.previous: Dict[str, str | None] = {}
+
+    def __enter__(self):
+        for key, value in self.values.items():
+            self.previous[key] = os.environ.get(key)
+            os.environ[key] = value
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for key, value in self.previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 class PlatformCrawler:
@@ -172,8 +191,16 @@ class PlatformCrawler:
             logger.exception(f"创建基础配置失败: {e}")
             return False
     
-    def run_crawler(self, platform: str, keywords: List[str], 
-                   login_type: str = "qrcode", max_notes: int = 50, headless: bool = True) -> Dict:
+    def run_crawler(
+        self,
+        platform: str,
+        keywords: List[str],
+        login_type: str = "qrcode",
+        max_notes: int = 50,
+        headless: bool = True,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+    ) -> Dict:
         """
         运行爬虫
         
@@ -197,6 +224,7 @@ class PlatformCrawler:
         logger.info(start_message)
         
         start_time = datetime.now()
+        touched_since_ms = int(start_time.timestamp() * 1000) - 5000
         
         try:
             # 配置数据库
@@ -223,12 +251,12 @@ class PlatformCrawler:
             
             logger.info(f"执行命令: {' '.join(cmd)}")
             before_counts = self._count_platform_records(platform)
-            
-            result = self._run_media_crawler_command(cmd, timeout=3600)
+            date_filter_env = self._date_filter_env(start_date, end_date)
+            with _temporary_environ(date_filter_env):
+                result = self._run_media_crawler_command(cmd, timeout=3600)
             
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
-            after_counts = self._count_platform_records(platform)
             output_stats = self._parse_crawl_output(
                 (result.stdout or "").splitlines(),
                 (result.stderr or "").splitlines(),
@@ -238,6 +266,8 @@ class PlatformCrawler:
                 result.stderr or "",
                 login_type,
             )
+            success = result.returncode == 0 and detected_error is None
+            after_counts = self._count_platform_records(platform)
             notes_count = max(
                 output_stats.get("notes_count", 0),
                 after_counts.get("notes", 0) - before_counts.get("notes", 0),
@@ -246,7 +276,6 @@ class PlatformCrawler:
                 output_stats.get("comments_count", 0),
                 after_counts.get("comments", 0) - before_counts.get("comments", 0),
             )
-            success = result.returncode == 0 and detected_error is None
             
             # 创建统计信息
             crawl_stats = {
@@ -266,7 +295,12 @@ class PlatformCrawler:
             elif result.returncode != 0:
                 crawl_stats["error"] = f"MediaCrawler subprocess exited with return code {result.returncode}"
             elif success:
-                crawl_stats["sentiment"] = self._postprocess_sentiment(platform)
+                crawl_stats["sentiment"] = self._postprocess_sentiment(
+                    platform,
+                    start_date=start_date,
+                    end_date=end_date,
+                    touched_since_ms=touched_since_ms,
+                )
             
             # 保存统计信息
             self.crawl_stats[platform] = crawl_stats
@@ -291,13 +325,25 @@ class PlatformCrawler:
             logger.exception(f"❌ {platform} 爬取异常: {e}")
             return {"success": False, "error": str(e), "platform": platform}
 
-    def _postprocess_sentiment(self, platform: str) -> Dict:
+    def _postprocess_sentiment(
+        self,
+        platform: str,
+        *,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        touched_since_ms: int | None = None,
+    ) -> Dict:
         logger.info(f"开始执行 {platform} 爬虫情绪后处理")
         from MindSpider.DeepSentimentCrawling.sentiment_postprocessor import (
             run_crawler_sentiment_postprocessing,
         )
 
-        stats = run_crawler_sentiment_postprocessing(platform)
+        stats = run_crawler_sentiment_postprocessing(
+            platform,
+            start_date=start_date,
+            end_date=end_date,
+            touched_since_ms=touched_since_ms,
+        )
         if stats.get("error"):
             logger.warning(f"{platform} 情绪后处理未完成: {stats['error']}")
         elif stats.get("disabled"):
@@ -308,6 +354,17 @@ class PlatformCrawler:
                 f"写回: {stats.get('updated', 0)}，失败: {stats.get('failed', 0)}"
             )
         return stats
+
+    @staticmethod
+    def _date_filter_env(
+        start_date: str | date | None,
+        end_date: str | date | None,
+    ) -> Dict[str, str]:
+        env: Dict[str, str] = {}
+        if start_date and end_date:
+            env["CRAWLER_START_DATE"] = str(start_date)[:10]
+            env["CRAWLER_END_DATE"] = str(end_date)[:10]
+        return env
 
     def _ensure_mediacrawler_schema(self, save_data_option: str) -> bool:
         init_db_type = {
@@ -539,9 +596,17 @@ class PlatformCrawler:
                 except Exception:
                     pass
     
-    def run_multi_platform_crawl_by_keywords(self, keywords: List[str], platforms: List[str],
-                                            login_type: str = "qrcode", max_notes_per_keyword: int = 50,
-                                            headless: bool = True) -> Dict:
+    def run_multi_platform_crawl_by_keywords(
+        self,
+        keywords: List[str],
+        platforms: List[str],
+        login_type: str = "qrcode",
+        max_notes_per_keyword: int = 50,
+        headless: bool = True,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        crawl_depth: int = 3,
+    ) -> Dict:
         """
         基于关键词的多平台爬取 - 每个关键词在所有平台上都进行爬取
         
@@ -550,6 +615,7 @@ class PlatformCrawler:
             platforms: 平台列表
             login_type: 登录方式
             max_notes_per_keyword: 每个关键词在每个平台的最大爬取数量
+            crawl_depth: 逻辑爬取深度，预留给平台适配器控制详情链路
         
         Returns:
             总体爬取统计
@@ -559,6 +625,7 @@ class PlatformCrawler:
         start_message += f"\n   关键词数量: {len(keywords)}"
         start_message += f"\n   平台数量: {len(platforms)}"
         start_message += f"\n   登录方式: {login_type}"
+        start_message += f"\n   爬取深度: {crawl_depth}"
         start_message += f"\n   每个关键词在每个平台的最大爬取数量: {max_notes_per_keyword}"
         start_message += f"\n   总爬取任务: {len(keywords)} × {len(platforms)} = {len(keywords) * len(platforms)}"
         logger.info(start_message)
@@ -591,7 +658,15 @@ class PlatformCrawler:
             
             try:
                 # 一次性传递所有关键词给平台
-                result = self.run_crawler(platform, keywords, login_type, max_notes_per_keyword, headless)
+                result = self.run_crawler(
+                    platform,
+                    keywords,
+                    login_type,
+                    max_notes_per_keyword,
+                    headless,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
                 
                 if result.get("success"):
                     total_stats["successful_tasks"] += len(keywords)

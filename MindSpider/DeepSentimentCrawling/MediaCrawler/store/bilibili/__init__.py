@@ -25,6 +25,7 @@
 from typing import List
 
 import config
+from tools import date_filter
 from var import source_keyword_var
 
 from ._store_impl import *
@@ -51,6 +52,9 @@ class BiliStoreFactory:
 
 
 async def update_bilibili_video(video_item: Dict):
+    if not date_filter.should_keep_content("bili", video_item):
+        utils.logger.info("[store.bilibili.update_bilibili_video] skip video outside configured date range")
+        return False
     video_item_view: Dict = video_item.get("View")
     video_user_info: Dict = video_item_view.get("owner")
     video_item_stat: Dict = video_item_view.get("stat")
@@ -79,6 +83,7 @@ async def update_bilibili_video(video_item: Dict):
     }
     utils.logger.info(f"[store.bilibili.update_bilibili_video] bilibili video id:{video_id}, title:{save_content_item.get('title')}")
     await BiliStoreFactory.create_store().store_content(content_item=save_content_item)
+    return True
 
 
 async def update_up_info(video_item: Dict):
@@ -108,6 +113,9 @@ async def batch_update_bilibili_video_comments(video_id: str, comments: List[Dic
 
 
 async def update_bilibili_video_comment(video_id: str, comment_item: Dict):
+    if not date_filter.should_keep_comment("bili", comment_item):
+        utils.logger.info("[store.bilibili.update_bilibili_video_comment] skip comment outside configured date range")
+        return False
     comment_id = str(comment_item.get("rpid"))
     parent_comment_id = str(comment_item.get("parent", 0))
     content: Dict = comment_item.get("content")
@@ -130,6 +138,7 @@ async def update_bilibili_video_comment(video_id: str, comment_item: Dict):
     }
     utils.logger.info(f"[store.bilibili.update_bilibili_video_comment] Bilibili video comment: {comment_id}, content: {save_comment_item.get('content')}")
     await BiliStoreFactory.create_store().store_comment(comment_item=save_comment_item)
+    return True
 
 
 async def store_video(aid, video_content, extension_file_name):

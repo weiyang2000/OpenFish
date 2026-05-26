@@ -21,6 +21,7 @@
 # -*- coding: utf-8 -*-
 from typing import List
 
+from tools import date_filter
 from model.m_baidu_tieba import TiebaComment, TiebaCreator, TiebaNote
 from var import source_keyword_var
 
@@ -71,12 +72,16 @@ async def update_tieba_note(note_item: TiebaNote):
     Returns:
 
     """
+    if not date_filter.should_keep_content("tieba", note_item):
+        utils.logger.info("[store.tieba.update_tieba_note] skip note outside configured date range")
+        return False
     note_item.source_keyword = source_keyword_var.get()
     save_note_item = note_item.model_dump()
     save_note_item.update({"last_modify_ts": utils.get_current_timestamp()})
     utils.logger.info(f"[store.tieba.update_tieba_note] tieba note: {save_note_item}")
 
     await TieBaStoreFactory.create_store().store_content(save_note_item)
+    return True
 
 
 async def batch_update_tieba_note_comments(note_id: str, comments: List[TiebaComment]):
@@ -105,10 +110,14 @@ async def update_tieba_note_comment(note_id: str, comment_item: TiebaComment):
     Returns:
 
     """
+    if not date_filter.should_keep_comment("tieba", comment_item):
+        utils.logger.info("[store.tieba.update_tieba_note_comment] skip comment outside configured date range")
+        return False
     save_comment_item = comment_item.model_dump()
     save_comment_item.update({"last_modify_ts": utils.get_current_timestamp()})
     utils.logger.info(f"[store.tieba.update_tieba_note_comment] tieba note id: {note_id} comment:{save_comment_item}")
     await TieBaStoreFactory.create_store().store_comment(save_comment_item)
+    return True
 
 
 async def save_creator(user_info: TiebaCreator):

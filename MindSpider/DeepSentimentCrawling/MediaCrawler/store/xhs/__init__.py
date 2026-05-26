@@ -24,6 +24,7 @@
 from typing import List
 
 import config
+from tools import date_filter
 from var import source_keyword_var
 
 from .xhs_store_media import *
@@ -92,6 +93,9 @@ async def update_xhs_note(note_item: Dict):
     Returns:
 
     """
+    if not date_filter.should_keep_content("xhs", note_item):
+        utils.logger.info("[store.xhs.update_xhs_note] skip note outside configured date range")
+        return False
     note_id = note_item.get("note_id")
     user_info = note_item.get("user", {})
     interact_info = note_item.get("interact_info", {})
@@ -129,6 +133,7 @@ async def update_xhs_note(note_item: Dict):
     }
     utils.logger.info(f"[store.xhs.update_xhs_note] xhs note: {local_db_item}")
     await XhsStoreFactory.create_store().store_content(local_db_item)
+    return True
 
 
 async def batch_update_xhs_note_comments(note_id: str, comments: List[Dict]):
@@ -157,6 +162,9 @@ async def update_xhs_note_comment(note_id: str, comment_item: Dict):
     Returns:
 
     """
+    if not date_filter.should_keep_comment("xhs", comment_item):
+        utils.logger.info("[store.xhs.update_xhs_note_comment] skip comment outside configured date range")
+        return False
     user_info = comment_item.get("user_info", {})
     comment_id = comment_item.get("id")
     comment_pictures = [item.get("url_default", "") for item in comment_item.get("pictures", [])]
@@ -178,6 +186,7 @@ async def update_xhs_note_comment(note_id: str, comment_item: Dict):
     }
     utils.logger.info(f"[store.xhs.update_xhs_note_comment] xhs note comment:{local_db_item}")
     await XhsStoreFactory.create_store().store_comment(local_db_item)
+    return True
 
 
 async def save_creator(user_id: str, creator: Dict):

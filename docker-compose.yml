@@ -51,6 +51,9 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_TELEMETRY_DISABLED=1
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+      - NEXT_PUBLIC_USE_MOCKS=${NEXT_PUBLIC_USE_MOCKS:-false}
+      - NEXT_PUBLIC_WORKSPACE_ID=${NEXT_PUBLIC_WORKSPACE_ID:-}
     ports:
       - "${WEB_PORT:-3000}:3000"
 

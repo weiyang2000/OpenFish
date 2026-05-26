@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS crawler_tasks (
     platforms_json TEXT NOT NULL DEFAULT '[]',
     keywords_json TEXT NOT NULL DEFAULT '[]',
     keyword_source TEXT NOT NULL DEFAULT 'manual',
+    crawl_depth INTEGER NOT NULL DEFAULT 3,
     max_notes_per_keyword INTEGER NOT NULL DEFAULT 50,
     max_comments_per_note INTEGER NOT NULL DEFAULT 100,
     login_type TEXT,
@@ -220,6 +221,7 @@ CREATE TABLE IF NOT EXISTS crawler_tasks (
     platforms_json LONGTEXT NOT NULL,
     keywords_json LONGTEXT NOT NULL,
     keyword_source VARCHAR(64) NOT NULL DEFAULT 'manual',
+    crawl_depth INTEGER NOT NULL DEFAULT 3,
     max_notes_per_keyword INTEGER NOT NULL DEFAULT 50,
     max_comments_per_note INTEGER NOT NULL DEFAULT 100,
     login_type VARCHAR(64),
@@ -486,6 +488,12 @@ class Store:
                 "crawler_tasks",
                 "keyword_source",
                 "TEXT NOT NULL DEFAULT 'manual'",
+            )
+            self._ensure_column(
+                conn,
+                "crawler_tasks",
+                "crawl_depth",
+                "INTEGER NOT NULL DEFAULT 3",
             )
             self._ensure_column(
                 conn,

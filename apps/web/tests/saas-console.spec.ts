@@ -19,7 +19,7 @@ test("opens every primary SaaS console section", async ({ page }) => {
     ["报告", "报告任务"],
     ["爬虫", "爬虫任务"],
     ["爬取数据", "爬取数据库"],
-    ["平台规则", "平台策略"],
+    ["平台规则", "平台用户名单"],
     ["系统配置", "系统配置"],
     ["运行日志", "运行日志"]
   ] as const) {
@@ -115,6 +115,16 @@ test("filters crawler accounts by platform and status with empty state", async (
   await expect(page.getByText("短视频监测")).toBeVisible();
 });
 
+test("deletes crawler accounts", async ({ page }) => {
+  await openConsole(page);
+  await page.getByRole("button", { name: "爬虫" }).click();
+
+  await page.locator(".account-row", { hasText: "BettaFish 运营号" }).getByTitle("删除爬虫账号").click();
+  await expect(page.getByText("爬虫账号已删除")).toBeVisible();
+  await expect(page.locator(".account-row", { hasText: "BettaFish 运营号" })).toHaveCount(0);
+  await expect(page.getByText("2 / 2 个账号")).toBeVisible();
+});
+
 test("adds a crawler account through the login modal", async ({ page }) => {
   await openConsole(page);
   await page.getByRole("button", { name: "爬虫" }).click();
@@ -149,6 +159,19 @@ test("searches crawler database records", async ({ page }) => {
   await expect(page.getByText("希望社区能把助餐和康复服务放在一起")).toBeVisible();
   await expect(page.getByText("正向")).toHaveCount(1);
   await expect(page.getByText("社区养老服务体验")).toHaveCount(0);
+});
+
+test("selects current crawler data page and batch deletes records", async ({ page }) => {
+  await openConsole(page);
+  await page.getByRole("button", { name: "爬取数据" }).click();
+
+  await expect(page.locator(".crawler-data-row").first()).toBeVisible();
+  await page.getByLabel("全选当前页爬取数据").check();
+  await expect(page.getByText(/条已选/)).toBeVisible();
+  await page.getByRole("button", { name: "删除选中" }).click();
+
+  await expect(page.getByText("已删除选中爬取数据")).toBeVisible();
+  await expect(page.locator(".crawler-data-row")).toHaveCount(0);
 });
 
 test("validates identity list input and adds a platform rule", async ({ page }) => {

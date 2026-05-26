@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -56,7 +57,7 @@ def test_run_crawler_reports_new_database_records(
     monkeypatch.setattr(
         crawler,
         "_postprocess_sentiment",
-        lambda _: {"processed": 8, "updated": 8, "failed": 0},
+        lambda *_, **__: {"processed": 8, "updated": 8, "failed": 0},
     )
 
     def fake_run(cmd, timeout):
@@ -71,6 +72,54 @@ def test_run_crawler_reports_new_database_records(
     assert result["notes_count"] == 3
     assert result["comments_count"] == 5
     assert result["sentiment"]["updated"] == 8
+
+
+def test_run_crawler_passes_dates_into_mediacrawler_before_sentiment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    crawler = _crawler(tmp_path)
+    calls: list[str] = []
+    counts = iter([{"notes": 10, "comments": 4}, {"notes": 12, "comments": 5}])
+    monkeypatch.delenv("CRAWLER_START_DATE", raising=False)
+    monkeypatch.delenv("CRAWLER_END_DATE", raising=False)
+    monkeypatch.setattr(crawler, "configure_mediacrawler_db", lambda: True)
+    monkeypatch.setattr(crawler, "create_base_config", lambda *_: True)
+    monkeypatch.setattr(crawler, "_count_platform_records", lambda _: next(counts))
+
+    def fake_run(cmd, timeout):
+        del timeout
+        calls.append("run")
+        assert os.environ["CRAWLER_START_DATE"] == "2026-05-20"
+        assert os.environ["CRAWLER_END_DATE"] == "2026-05-22"
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    def fake_sentiment(platform, *, start_date, end_date, touched_since_ms):
+        calls.append("sentiment")
+        assert platform == "wb"
+        assert start_date == "2026-05-20"
+        assert end_date == "2026-05-22"
+        assert touched_since_ms > 0
+        return {"processed": 3, "updated": 3, "failed": 0}
+
+    monkeypatch.setattr(crawler, "_run_media_crawler_command", fake_run)
+    monkeypatch.setattr(crawler, "_postprocess_sentiment", fake_sentiment)
+
+    result = crawler.run_crawler(
+        "wb",
+        ["AI"],
+        login_type="cookie",
+        headless=True,
+        start_date="2026-05-20",
+        end_date="2026-05-22",
+    )
+
+    assert calls == ["run", "sentiment"]
+    assert result["notes_count"] == 2
+    assert result["comments_count"] == 1
+    assert result["sentiment"]["updated"] == 3
+    assert "CRAWLER_START_DATE" not in os.environ
+    assert "CRAWLER_END_DATE" not in os.environ
 
 
 def test_run_crawler_treats_invalid_cookie_as_failed(

@@ -51,13 +51,18 @@ PLATFORM_LOGIN_URLS = {
 }
 
 PLATFORM_LOGIN_MARKERS = {
-    "xhs": ("web_session", "a1"),
+    "xhs": ("web_session",),
     "dy": ("LOGIN_STATUS", "sessionid"),
-    "ks": ("kuaishou.server.web_st", "passToken", "did"),
+    "ks": ("passToken",),
     "bili": ("SESSDATA", "DedeUserID"),
     "wb": ("SUB", "SUBP", "SSOLoginState", "WBPSESS"),
-    "tieba": ("BDUSS", "STOKEN"),
+    "tieba": ("STOKEN", "PTOKEN", "BDUSS"),
     "zhihu": ("z_c0",),
+}
+
+PLATFORM_CHANGED_LOGIN_MARKERS = {
+    "xhs": ("web_session",),
+    "wb": ("WBPSESS",),
 }
 
 PLATFORM_DISPLAY_NAMES = {
@@ -220,6 +225,41 @@ class AccountService:
         )
         return self._account_row(row)
 
+    def delete_account(self, workspace_id: str, account_id: str) -> None:
+        row = self.store.query_one(
+            """
+            SELECT id
+            FROM crawler_accounts
+            WHERE workspace_id = ? AND id = ?
+            """,
+            (workspace_id, account_id),
+        )
+        if not row:
+            rows = self.store.query_all(
+                """
+                SELECT id
+                FROM crawler_accounts
+                WHERE workspace_id = ? AND account_id = ?
+                ORDER BY updated_at DESC
+                LIMIT 2
+                """,
+                (workspace_id, account_id),
+            )
+            if not rows:
+                raise ApiError("NOT_FOUND", "Crawler account not found", status_code=404)
+            if len(rows) > 1:
+                raise ApiError(
+                    "CONFLICT",
+                    "Multiple crawler accounts match this accountId. Delete by the returned account id instead.",
+                    status_code=409,
+                )
+            row = rows[0]
+
+        self.store.execute(
+            "DELETE FROM crawler_accounts WHERE workspace_id = ? AND id = ?",
+            (workspace_id, row["id"]),
+        )
+
     def account_counts(self, workspace_id: str, platform_id: str) -> dict[str, int]:
         self._ensure_platform(platform_id)
         rows = self.store.query_all(
@@ -371,6 +411,7 @@ class AccountService:
             if payload.loginType == "qrcode":
                 await self._publish_login_preview(session_id, page, payload.platformId)
 
+            baseline_state = self._cookie_dict(await context.cookies())
             deadline = time.monotonic() + payload.timeoutSeconds
             last_state_names: list[str] = []
             while time.monotonic() < deadline:
@@ -384,7 +425,7 @@ class AccountService:
                         observedStateNames=state_names[:30],
                         observedStateCount=len(state_names),
                     )
-                if self._has_required_login_state(payload.platformId, state):
+                if self._has_required_login_state(payload.platformId, state, baseline_state):
                     return self._persist_logged_in_account(
                         workspace_id,
                         payload.platformId,
@@ -612,6 +653,7 @@ class AccountService:
             details={
                 "message": "登录状态已保存，可用于后续采集。",
                 "scopes": ["search", "detail"],
+                "loginStateNames": markers,
                 "stateNames": sorted(state.keys())[:30],
                 "stateCount": len(state),
                 "loginSessionId": session_id,
@@ -639,9 +681,22 @@ class AccountService:
         return state
 
     @staticmethod
-    def _has_required_login_state(platform_id: str, state: dict[str, str]) -> bool:
+    def _has_required_login_state(
+        platform_id: str,
+        state: dict[str, str],
+        baseline_state: dict[str, str] | None = None,
+    ) -> bool:
         markers = PLATFORM_LOGIN_MARKERS[platform_id]
-        return any(state.get(marker) for marker in markers)
+        changed_markers = set(PLATFORM_CHANGED_LOGIN_MARKERS.get(platform_id, ()))
+        baseline_state = baseline_state or {}
+        for marker in markers:
+            value = state.get(marker)
+            if not value:
+                continue
+            if marker in changed_markers and baseline_state.get(marker) == value:
+                continue
+            return True
+        return False
 
     @staticmethod
     def _image_data_url(content: bytes, mime_type: str) -> str:

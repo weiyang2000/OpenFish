@@ -24,6 +24,7 @@ from typing import List
 import config
 from base.base_crawler import AbstractStore
 from model.m_zhihu import ZhihuComment, ZhihuContent, ZhihuCreator
+from tools import date_filter
 from ._store_impl import (ZhihuCsvStoreImplement,
                                           ZhihuDbStoreImplement,
                                           ZhihuJsonStoreImplement,
@@ -76,11 +77,15 @@ async def update_zhihu_content(content_item: ZhihuContent):
     Returns:
 
     """
+    if not date_filter.should_keep_content("zhihu", content_item):
+        utils.logger.info("[store.zhihu.update_zhihu_content] skip content outside configured date range")
+        return False
     content_item.source_keyword = source_keyword_var.get()
     local_db_item = content_item.model_dump()
     local_db_item.update({"last_modify_ts": utils.get_current_timestamp()})
     utils.logger.info(f"[store.zhihu.update_zhihu_content] zhihu content: {local_db_item}")
     await ZhihuStoreFactory.create_store().store_content(local_db_item)
+    return True
 
 
 
@@ -109,10 +114,14 @@ async def update_zhihu_content_comment(comment_item: ZhihuComment):
     Returns:
 
     """
+    if not date_filter.should_keep_comment("zhihu", comment_item):
+        utils.logger.info("[store.zhihu.update_zhihu_note_comment] skip comment outside configured date range")
+        return False
     local_db_item = comment_item.model_dump()
     local_db_item.update({"last_modify_ts": utils.get_current_timestamp()})
     utils.logger.info(f"[store.zhihu.update_zhihu_note_comment] zhihu content comment:{local_db_item}")
     await ZhihuStoreFactory.create_store().store_comment(local_db_item)
+    return True
 
 
 async def save_creator(creator: ZhihuCreator):

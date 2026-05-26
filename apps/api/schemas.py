@@ -176,14 +176,15 @@ class CrawlerStrategyInput(BaseModel):
 
 class CreateCrawlerTaskRequest(BaseModel):
     strategyId: str | None = None
-    runMode: Literal["topic_extraction", "deep_sentiment", "full_workflow"]
+    runMode: Literal["topic_extraction", "deep_sentiment", "full_workflow"] = "deep_sentiment"
     targetDate: str | None = None
     startDate: str | None = None
     endDate: str | None = None
     schedule: CrawlFrequency = Field(default_factory=CrawlFrequency)
     platforms: list[str] = Field(min_length=1)
     keywords: list[str] = Field(min_length=1, max_length=500)
-    keywordSource: Literal["manual"]
+    keywordSource: Literal["manual"] = "manual"
+    crawlDepth: int = Field(default=3, ge=1, le=10)
     maxNotesPerKeyword: int | None = Field(default=None, ge=1, le=1000)
     maxCommentsPerNote: int | None = Field(default=None, ge=0, le=5000)
     loginType: Literal["qrcode", "phone", "cookie"] | None = None
@@ -272,6 +273,28 @@ class CreateCrawlerAccountLoginSessionRequest(BaseModel):
         if value not in PLATFORM_IDS:
             raise ValueError(f"unsupported platform: {value}")
         return value
+
+
+class CrawlerDataDeleteItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tableName: str = Field(min_length=1)
+    sourceId: str = Field(min_length=1)
+    platform: str | None = None
+    contentType: Literal["content", "comment"] | None = None
+
+    @field_validator("platform")
+    @classmethod
+    def validate_platform(cls, value: str | None) -> str | None:
+        if value is not None and value not in PLATFORM_IDS:
+            raise ValueError(f"unsupported platform: {value}")
+        return value
+
+
+class CrawlerDataBatchDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    records: list[CrawlerDataDeleteItem] = Field(min_length=1, max_length=200)
 
 
 class IdentityRuleInput(BaseModel):

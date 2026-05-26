@@ -27,7 +27,7 @@ from base.base_crawler import AbstractCrawler
 from model.m_baidu_tieba import TiebaCreator, TiebaNote
 from proxy.proxy_ip_pool import IpInfoModel, ProxyIpPool, create_ip_pool
 from store import tieba as tieba_store
-from tools import utils
+from tools import date_filter, utils
 from tools.cloak_browser import launch_cloak_browser_context
 from var import crawler_type_var, source_keyword_var
 
@@ -126,8 +126,7 @@ class TieBaCrawler(AbstractCrawler):
             "[BaiduTieBaCrawler.search] Begin search baidu tieba keywords"
         )
         tieba_limit_count = 10  # tieba limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < tieba_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = tieba_limit_count
+        max_notes = max(0, int(config.CRAWLER_MAX_NOTES_COUNT))
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
@@ -135,9 +134,8 @@ class TieBaCrawler(AbstractCrawler):
                 f"[BaiduTieBaCrawler.search] Current search keyword: {keyword}"
             )
             page = 1
-            while (
-                page - start_page + 1
-            ) * tieba_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            accepted_count = 0
+            while accepted_count < max_notes:
                 if page < start_page:
                     utils.logger.info(f"[BaiduTieBaCrawler.search] Skip page {page}")
                     page += 1
@@ -163,9 +161,14 @@ class TieBaCrawler(AbstractCrawler):
                     utils.logger.info(
                         f"[BaiduTieBaCrawler.search] Note list len: {len(notes_list)}"
                     )
-                    await self.get_specified_notes(
-                        note_id_list=[note_detail.note_id for note_detail in notes_list]
+                    if not date_filter.has_new_time_records("tieba", "content", notes_list):
+                        utils.logger.info("[BaiduTieBaCrawler.search] No new-time notes before filtering, stop crawling")
+                        break
+                    accepted_notes = await self.get_specified_notes(
+                        note_id_list=[note_detail.note_id for note_detail in notes_list],
+                        max_notes=max_notes - accepted_count,
                     )
+                    accepted_count += len(accepted_notes)
 
                     # Sleep after page navigation
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
@@ -185,14 +188,14 @@ class TieBaCrawler(AbstractCrawler):
 
         """
         tieba_limit_count = 50
-        if config.CRAWLER_MAX_NOTES_COUNT < tieba_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = tieba_limit_count
+        max_notes = max(0, int(config.CRAWLER_MAX_NOTES_COUNT))
         for tieba_name in config.TIEBA_NAME_LIST:
             utils.logger.info(
                 f"[BaiduTieBaCrawler.get_specified_tieba_notes] Begin get tieba name: {tieba_name}"
             )
             page_number = 0
-            while page_number <= config.CRAWLER_MAX_NOTES_COUNT:
+            accepted_count = 0
+            while accepted_count < max_notes:
                 note_list: List[TiebaNote] = (
                     await self.tieba_client.get_notes_by_tieba_name(
                         tieba_name=tieba_name, page_num=page_number
@@ -207,7 +210,14 @@ class TieBaCrawler(AbstractCrawler):
                 utils.logger.info(
                     f"[BaiduTieBaCrawler.get_specified_tieba_notes] tieba name: {tieba_name} note list len: {len(note_list)}"
                 )
-                await self.get_specified_notes([note.note_id for note in note_list])
+                if not date_filter.has_new_time_records("tieba", "content", note_list):
+                    utils.logger.info("[BaiduTieBaCrawler.get_specified_tieba_notes] No new-time notes before filtering, stop crawling")
+                    break
+                accepted_notes = await self.get_specified_notes(
+                    [note.note_id for note in note_list],
+                    max_notes=max_notes - accepted_count,
+                )
+                accepted_count += len(accepted_notes)
 
                 # Sleep after processing notes
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
@@ -216,7 +226,9 @@ class TieBaCrawler(AbstractCrawler):
                 page_number += tieba_limit_count
 
     async def get_specified_notes(
-        self, note_id_list: List[str] = config.TIEBA_SPECIFIED_ID_LIST
+        self,
+        note_id_list: List[str] = config.TIEBA_SPECIFIED_ID_LIST,
+        max_notes: int | None = None,
     ):
         """
         Get the information and comments of the specified post
@@ -235,9 +247,13 @@ class TieBaCrawler(AbstractCrawler):
         note_details_model: List[TiebaNote] = []
         for note_detail in note_details:
             if note_detail is not None:
+                if max_notes is not None and len(note_details_model) >= max_notes:
+                    break
+                if not await tieba_store.update_tieba_note(note_detail):
+                    continue
                 note_details_model.append(note_detail)
-                await tieba_store.update_tieba_note(note_detail)
         await self.batch_get_note_comments(note_details_model)
+        return note_details_model
 
     async def get_note_detail_async_task(
         self, note_id: str, semaphore: asyncio.Semaphore

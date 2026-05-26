@@ -39,24 +39,26 @@ import {
   createCrawlerTask,
   createIdentityRule,
   createReportTask,
+  deleteCrawlerAccount,
   deleteCrawlerTask,
   deleteCrawlerDataRecord,
+  deleteCrawlerDataRecords,
   deleteIdentityRule,
   deleteReportTask,
   getCrawlerAccountLoginSession,
   listCrawlerData,
+  listCrawlerTasks,
+  listReportTasks,
   listTaskLogs,
   loadConsoleSnapshot,
   rerunReportTask,
   stopCrawlerTask,
-  updatePlatformPolicy,
   updateSystemConfig
 } from "@/lib/openapi-client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   ComponentStatus,
@@ -69,7 +71,6 @@ import type {
   CrawlerDataRecord,
   CrawlerDataPage,
   CrawlerSentiment,
-  CrawlerTaskKeywordSource,
   CrawlerTask,
   IdentityListType,
   IdentityRule,
@@ -80,7 +81,6 @@ import type {
   ReportFormat,
   ReportTemplate,
   ReportTask,
-  RunMode,
   TaskLogPage,
   TaskLogType,
   TaskStatus
@@ -157,6 +157,13 @@ const crawlerDataTypeLabels: Record<CrawlerDataRecord["contentType"], string> = 
   comment: "评论"
 };
 
+const activeTaskStatuses: ReadonlySet<TaskStatus> = new Set([
+  "queued",
+  "pending",
+  "running",
+  "stopping"
+]);
+
 function classNames(...values: Array<string | false | undefined>) {
   return values.filter(Boolean).join(" ");
 }
@@ -221,8 +228,10 @@ function formatCrawlerSchedule(schedule?: CrawlFrequency) {
   return scheduleLabels[schedule.mode];
 }
 
-function crawlerDataRecordKey(record: Pick<CrawlerDataRecord, "tableName" | "sourceId">) {
-  return `${record.tableName}:${record.sourceId}`;
+function crawlerDataRecordKey(
+  record: Pick<CrawlerDataRecord, "platformId" | "contentType" | "tableName" | "sourceId">
+) {
+  return `${record.platformId}:${record.contentType}:${record.tableName}:${record.sourceId}`;
 }
 
 function summarizeCrawlerData(records: CrawlerDataRecord[]): CrawlerDataPage["summary"] {
@@ -244,14 +253,30 @@ function summarizeCrawlerData(records: CrawlerDataRecord[]): CrawlerDataPage["su
 
 function removeCrawlerDataRecordFromPage(
   page: CrawlerDataPage,
-  record: Pick<CrawlerDataRecord, "tableName" | "sourceId">
+  record: Pick<CrawlerDataRecord, "platformId" | "contentType" | "tableName" | "sourceId">
 ): CrawlerDataPage {
-  const key = crawlerDataRecordKey(record);
-  const records = page.records.filter((item) => crawlerDataRecordKey(item) !== key);
+  return removeCrawlerDataRecordsFromPage(page, [record]);
+}
+
+function removeCrawlerDataRecordsFromPage(
+  page: CrawlerDataPage,
+  deletedRecords: Array<Pick<CrawlerDataRecord, "platformId" | "contentType" | "tableName" | "sourceId">>
+): CrawlerDataPage {
+  const deletedKeys = new Set(deletedRecords.map(crawlerDataRecordKey));
+  const records = page.records.filter((item) => !deletedKeys.has(crawlerDataRecordKey(item)));
+  const totalRecords = Math.max(0, page.pageInfo.totalRecords - deletedKeys.size);
+  const totalPages = totalRecords === 0 ? 0 : Math.ceil(totalRecords / page.pageInfo.pageSize);
   return {
     ...page,
     records,
-    summary: summarizeCrawlerData(records)
+    summary: summarizeCrawlerData(records),
+    pageInfo: {
+      ...page.pageInfo,
+      totalRecords,
+      totalPages,
+      hasPreviousPage: page.pageInfo.page > 1 && totalPages > 0,
+      hasNextPage: totalPages > 0 && page.pageInfo.page < totalPages
+    }
   };
 }
 
@@ -365,6 +390,10 @@ function mergeCrawlerAccount(accounts: CrawlerAccount[], account: CrawlerAccount
   return accounts.map((item) => (item.id === account.id ? account : item));
 }
 
+function removeCrawlerAccount(accounts: CrawlerAccount[], accountId: string) {
+  return accounts.filter((account) => account.id !== accountId);
+}
+
 export function ConsoleShell() {
   const [activeSection, setActiveSection] = useState<Section>("dashboard");
   const [snapshot, setSnapshot] = useState<ConsoleSnapshot | null>(null);
@@ -386,6 +415,9 @@ export function ConsoleShell() {
   const [accountLoginSession, setAccountLoginSession] = useState<CrawlerAccountLoginSession | null>(null);
   const [crawlerData, setCrawlerData] = useState<CrawlerDataPage | null>(null);
   const [crawlerDataLoading, setCrawlerDataLoading] = useState(false);
+  const [crawlerDataPage, setCrawlerDataPage] = useState(1);
+  const [crawlerDataPageSize, setCrawlerDataPageSize] = useState(20);
+  const [selectedCrawlerDataRecords, setSelectedCrawlerDataRecords] = useState<Record<string, CrawlerDataRecord>>({});
   const [crawlerDataFilters, setCrawlerDataFilters] = useState<{
     platform: PlatformId | "all";
     contentType: "content" | "comment" | "all";
@@ -407,7 +439,6 @@ export function ConsoleShell() {
     task: ReportTask;
     engines: Record<ReportEngineId, boolean>;
   } | null>(null);
-  const [policyDraft, setPolicyDraft] = useState<PlatformPolicy | null>(null);
   const [logSource, setLogSource] = useState<string>("all");
   const [configDraft, setConfigDraft] = useState<Record<string, string>>({});
   const [reportForm, setReportForm] = useState({
@@ -426,26 +457,24 @@ export function ConsoleShell() {
     } satisfies Record<ReportEngineId, boolean>
   });
   const [crawlerForm, setCrawlerForm] = useState<{
-    runMode: RunMode;
     startDate: string;
     endDate: string;
     scheduleMode: CrawlFrequency["mode"];
     scheduleCron: string;
     platforms: PlatformId[];
     keywords: string;
-    keywordSource: CrawlerTaskKeywordSource;
+    crawlDepth: number;
     maxNotesPerKeyword: number;
     maxCommentsPerNote: number;
     headless: boolean;
   }>({
-    runMode: "deep_sentiment",
     startDate: "2026-05-22",
     endDate: "2026-05-25",
     scheduleMode: "manual",
     scheduleCron: "",
     platforms: ["wb"] as PlatformId[],
     keywords: "养老服务\n医保支付",
-    keywordSource: "manual",
+    crawlDepth: 3,
     maxNotesPerKeyword: 50,
     maxCommentsPerNote: 100,
     headless: true
@@ -465,7 +494,6 @@ export function ConsoleShell() {
       setSnapshot(data);
       const firstPlatform = data.platforms[0]?.id ?? "wb";
       setSelectedPlatformId(firstPlatform);
-      setPolicyDraft(data.platforms.find((item) => item.id === firstPlatform)?.policy ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {
@@ -476,11 +504,6 @@ export function ConsoleShell() {
   useEffect(() => {
     void load();
   }, []);
-
-  useEffect(() => {
-    if (!snapshot) return;
-    setPolicyDraft(snapshot.platforms.find((item) => item.id === selectedPlatformId)?.policy ?? null);
-  }, [selectedPlatformId, snapshot]);
 
   useEffect(() => {
     if (!accountLoginSession || ["completed", "failed"].includes(accountLoginSession.status)) return;
@@ -509,6 +532,84 @@ export function ConsoleShell() {
     void loadCrawlerData();
   }, [activeSection]);
 
+  const shouldPollReportTasks = useMemo(
+    () => snapshot?.reportTasks.some((task) => activeTaskStatuses.has(task.status)) ?? false,
+    [snapshot?.reportTasks]
+  );
+
+  useEffect(() => {
+    if (!shouldPollReportTasks) return;
+
+    let cancelled = false;
+    const refreshReportTasks = async () => {
+      try {
+        const tasks = await listReportTasks();
+        if (cancelled) return;
+        setSnapshot((current) =>
+          current
+            ? {
+                ...current,
+                reportTasks: tasks
+              }
+            : current
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "报告任务状态刷新失败");
+        }
+      }
+    };
+
+    void refreshReportTasks();
+    const timer = window.setInterval(() => {
+      void refreshReportTasks();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [shouldPollReportTasks]);
+
+  const shouldPollCrawlerTasks = useMemo(
+    () => snapshot?.crawlerTasks.some((task) => activeTaskStatuses.has(task.status)) ?? false,
+    [snapshot?.crawlerTasks]
+  );
+
+  useEffect(() => {
+    if (!shouldPollCrawlerTasks) return;
+
+    let cancelled = false;
+    const refreshCrawlerTasks = async () => {
+      try {
+        const tasks = await listCrawlerTasks();
+        if (cancelled) return;
+        setSnapshot((current) =>
+          current
+            ? {
+                ...current,
+                crawlerTasks: tasks
+              }
+            : current
+        );
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "爬虫任务状态刷新失败");
+        }
+      }
+    };
+
+    void refreshCrawlerTasks();
+    const timer = window.setInterval(() => {
+      void refreshCrawlerTasks();
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [shouldPollCrawlerTasks]);
+
   const metrics = useMemo(() => {
     if (!snapshot) return null;
     const runningComponents = snapshot.components.filter((item) => item.status === "running").length;
@@ -529,6 +630,13 @@ export function ConsoleShell() {
     }) ?? [];
   const filteredLogs =
     snapshot?.logs.filter((line) => logSource === "all" || line.source === logSource) ?? [];
+  const selectedCrawlerDataKeys = Object.keys(selectedCrawlerDataRecords);
+  const currentCrawlerDataKeys = crawlerData?.records.map(crawlerDataRecordKey) ?? [];
+  const currentCrawlerDataSelectedCount = currentCrawlerDataKeys.filter(
+    (key) => selectedCrawlerDataRecords[key]
+  ).length;
+  const allCurrentCrawlerDataSelected =
+    currentCrawlerDataKeys.length > 0 && currentCrawlerDataSelectedCount === currentCrawlerDataKeys.length;
   const accountLoginInProgress =
     accountLoginSession?.status === "opening" || accountLoginSession?.status === "waiting";
   const reportTemplateOptions = useMemo(() => {
@@ -569,15 +677,18 @@ export function ConsoleShell() {
       }
     });
 
-  async function loadCrawlerData() {
+  async function loadCrawlerData(page = crawlerDataPage, pageSize = crawlerDataPageSize) {
     setCrawlerDataLoading(true);
     try {
-      const page = await listCrawlerData({
+      const dataPage = await listCrawlerData({
         ...crawlerDataFilters,
         q: crawlerDataFilters.q.trim(),
-        pageSize: 80
+        page,
+        pageSize
       });
-      setCrawlerData(page);
+      setCrawlerData(dataPage);
+      setCrawlerDataPage(dataPage.pageInfo.page);
+      setCrawlerDataPageSize(dataPage.pageInfo.pageSize);
     } catch (err) {
       setError(err instanceof Error ? err.message : "爬取数据加载失败");
     } finally {
@@ -585,11 +696,89 @@ export function ConsoleShell() {
     }
   }
 
+  const searchCrawlerData = () => {
+    setSelectedCrawlerDataRecords({});
+    setCrawlerDataPage(1);
+    return loadCrawlerData(1, crawlerDataPageSize);
+  };
+
   const removeCrawlerDataRecord = (record: CrawlerDataRecord) =>
     runAction("爬取数据已删除", async () => {
       await deleteCrawlerDataRecord(record);
+      setSelectedCrawlerDataRecords((current) => {
+        const next = { ...current };
+        delete next[crawlerDataRecordKey(record)];
+        return next;
+      });
       setCrawlerData((current) =>
         current ? removeCrawlerDataRecordFromPage(current, record) : current
+      );
+      await loadCrawlerData(crawlerDataPage, crawlerDataPageSize);
+    });
+
+  const toggleCrawlerDataRecord = (record: CrawlerDataRecord, selected: boolean) => {
+    const key = crawlerDataRecordKey(record);
+    setSelectedCrawlerDataRecords((current) => {
+      const next = { ...current };
+      if (selected) {
+        next[key] = record;
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const toggleCurrentCrawlerDataPage = (selected: boolean) => {
+    if (!crawlerData) return;
+    setSelectedCrawlerDataRecords((current) => {
+      const next = { ...current };
+      for (const record of crawlerData.records) {
+        const key = crawlerDataRecordKey(record);
+        if (selected) {
+          next[key] = record;
+        } else {
+          delete next[key];
+        }
+      }
+      return next;
+    });
+  };
+
+  const removeSelectedCrawlerDataRecords = () =>
+    runAction("已删除选中爬取数据", async () => {
+      const selectedRecords = Object.values(selectedCrawlerDataRecords);
+      if (selectedRecords.length === 0) return;
+      await deleteCrawlerDataRecords(selectedRecords);
+      setSelectedCrawlerDataRecords({});
+      setCrawlerData((current) =>
+        current ? removeCrawlerDataRecordsFromPage(current, selectedRecords) : current
+      );
+      const nextPage =
+        crawlerData && selectedRecords.length >= crawlerData.records.length && crawlerDataPage > 1
+          ? crawlerDataPage - 1
+          : crawlerDataPage;
+      await loadCrawlerData(nextPage, crawlerDataPageSize);
+    });
+
+  const goToCrawlerDataPage = (page: number) => {
+    const totalPages = crawlerData?.pageInfo.totalPages ?? 0;
+    const nextPage = Math.max(1, totalPages ? Math.min(page, totalPages) : page);
+    setCrawlerDataPage(nextPage);
+    setSelectedCrawlerDataRecords({});
+    void loadCrawlerData(nextPage, crawlerDataPageSize);
+  };
+
+  const removeCrawlerAccountRow = (account: CrawlerAccount) =>
+    runAction("爬虫账号已删除", async () => {
+      await deleteCrawlerAccount(account.id);
+      setSnapshot((current) =>
+        current
+          ? {
+              ...current,
+              crawlerAccounts: removeCrawlerAccount(current.crawlerAccounts, account.id)
+            }
+          : current
       );
     });
 
@@ -696,7 +885,7 @@ export function ConsoleShell() {
         throw new Error("Cron 表达式不能为空");
       }
       const task = await createCrawlerTask({
-        runMode: crawlerForm.runMode,
+        runMode: "deep_sentiment",
         startDate: crawlerForm.startDate,
         endDate: crawlerForm.endDate,
         schedule: {
@@ -706,7 +895,8 @@ export function ConsoleShell() {
         },
         platforms: crawlerForm.platforms,
         keywords,
-        keywordSource: crawlerForm.keywordSource,
+        keywordSource: "manual",
+        crawlDepth: crawlerForm.crawlDepth,
         maxNotesPerKeyword: crawlerForm.maxNotesPerKeyword,
         maxCommentsPerNote: crawlerForm.maxCommentsPerNote,
         headless: crawlerForm.headless,
@@ -715,24 +905,6 @@ export function ConsoleShell() {
       setSnapshot({
         ...snapshot,
         crawlerTasks: [task, ...snapshot.crawlerTasks]
-      });
-    });
-
-  const savePolicy = () =>
-    runAction("平台策略已保存", async () => {
-      if (!snapshot || !policyDraft) return;
-      const policy = await updatePlatformPolicy(selectedPlatformId, policyDraft);
-      setSnapshot({
-        ...snapshot,
-        platforms: snapshot.platforms.map((platform) =>
-          platform.id === selectedPlatformId
-            ? {
-                ...platform,
-                enabled: policy.enabled,
-                policy
-              }
-            : platform
-        )
       });
     });
 
@@ -799,10 +971,6 @@ export function ConsoleShell() {
       setConfigDraft({});
     });
 
-  const setPolicyValue = <K extends keyof PlatformPolicy>(key: K, value: PlatformPolicy[K]) => {
-    setPolicyDraft((current) => (current ? { ...current, [key]: value } : current));
-  };
-
   if (loading) {
     return (
       <main className="loading-screen">
@@ -867,7 +1035,7 @@ export function ConsoleShell() {
         <header className="topbar">
           <div>
             <h1>舆情 SaaS 控制台</h1>
-            <p>报告、爬虫、平台策略与运行状态统一入口</p>
+            <p>报告、爬虫、平台名单与运行状态统一入口</p>
           </div>
           <div className="topbar-actions">
             {notice && <span className="notice">{notice}</span>}
@@ -1215,6 +1383,18 @@ export function ConsoleShell() {
                         <strong>{account.accountId}</strong>
                         <span>{account.details?.message ?? "无附加说明"}</span>
                       </div>
+                      <div className="account-actions">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="icon-button danger"
+                          title="删除爬虫账号"
+                          onClick={() => void removeCrawlerAccountRow(account)}
+                          disabled={busyAction !== null}
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1230,32 +1410,6 @@ export function ConsoleShell() {
                 />
               </label>
               <label className="field">
-                <span>模式</span>
-                <select
-                  value={crawlerForm.runMode}
-                  onChange={(event) =>
-                    setCrawlerForm({ ...crawlerForm, runMode: event.target.value as RunMode })
-                  }
-                >
-                  <option value="deep_sentiment">Deep Sentiment</option>
-                  <option value="full_workflow">Full Workflow</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>关键词来源</span>
-                <select
-                  value={crawlerForm.keywordSource}
-                  onChange={(event) =>
-                    setCrawlerForm({
-                      ...crawlerForm,
-                      keywordSource: event.target.value as CrawlerTaskKeywordSource
-                    })
-                  }
-                >
-                  <option value="manual">Manual</option>
-                </select>
-              </label>
-              <label className="field">
                 <span>开始日期</span>
                 <Input
                   type="date"
@@ -1269,6 +1423,16 @@ export function ConsoleShell() {
                   type="date"
                   value={crawlerForm.endDate}
                   onChange={(event) => setCrawlerForm({ ...crawlerForm, endDate: event.target.value })}
+                />
+              </label>
+              <label className="field">
+                <span>爬取深度</span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={crawlerForm.crawlDepth}
+                  onChange={(event) => setCrawlerForm({ ...crawlerForm, crawlDepth: Number(event.target.value) })}
                 />
               </label>
               <label className="field">
@@ -1364,8 +1528,8 @@ export function ConsoleShell() {
                   >
                     <strong>{task.keywords.slice(0, 3).join(" / ") || task.runMode}</strong>
                     <span>
-                      {task.platforms.map((id) => platformNames[id]).join(" / ")} · {task.keywordSource} ·{" "}
-                      {formatCrawlerDateRange(task)} · {formatCrawlerSchedule(task.schedule)} ·{" "}
+                      {task.platforms.map((id) => platformNames[id]).join(" / ")} · {formatCrawlerDateRange(task)} ·{" "}
+                      {formatCrawlerSchedule(task.schedule)} ·{" "}
                       {formatTime(task.updatedAt)}
                     </span>
                     <ProgressBar value={task.progress} />
@@ -1455,7 +1619,7 @@ export function ConsoleShell() {
                   </Button>
                   <Button
                     className="primary-button"
-                    onClick={() => void loadCrawlerData()}
+                    onClick={() => void searchCrawlerData()}
                     disabled={crawlerDataLoading}
                   >
                     {crawlerDataLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
@@ -1469,12 +1633,14 @@ export function ConsoleShell() {
                 <span>平台</span>
                 <select
                   value={crawlerDataFilters.platform}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    setCrawlerDataPage(1);
+                    setSelectedCrawlerDataRecords({});
                     setCrawlerDataFilters({
                       ...crawlerDataFilters,
                       platform: event.target.value === "all" ? "all" : (event.target.value as PlatformId)
-                    })
-                  }
+                    });
+                  }}
                 >
                   <option value="all">全部平台</option>
                   {snapshot.platforms.map((platform) => (
@@ -1488,12 +1654,14 @@ export function ConsoleShell() {
                 <span>类型</span>
                 <select
                   value={crawlerDataFilters.contentType}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    setCrawlerDataPage(1);
+                    setSelectedCrawlerDataRecords({});
                     setCrawlerDataFilters({
                       ...crawlerDataFilters,
                       contentType: event.target.value as "content" | "comment" | "all"
-                    })
-                  }
+                    });
+                  }}
                 >
                   <option value="all">全部类型</option>
                   <option value="content">内容</option>
@@ -1504,9 +1672,11 @@ export function ConsoleShell() {
                 <span>检索词</span>
                 <Input
                   value={crawlerDataFilters.q}
-                  onChange={(event) =>
-                    setCrawlerDataFilters({ ...crawlerDataFilters, q: event.target.value })
-                  }
+                  onChange={(event) => {
+                    setCrawlerDataPage(1);
+                    setSelectedCrawlerDataRecords({});
+                    setCrawlerDataFilters({ ...crawlerDataFilters, q: event.target.value });
+                  }}
                   placeholder="标题、正文、作者、关键词"
                 />
               </label>
@@ -1531,6 +1701,70 @@ export function ConsoleShell() {
                 icon={Activity}
               />
             </div>
+            <div className="crawler-data-toolbar">
+              <label className="checkbox-row crawler-data-select-all">
+                <input
+                  type="checkbox"
+                  checked={allCurrentCrawlerDataSelected}
+                  disabled={!crawlerData || crawlerData.records.length === 0}
+                  onChange={(event) => toggleCurrentCrawlerDataPage(event.target.checked)}
+                  aria-label="全选当前页爬取数据"
+                />
+                <span>全选本页</span>
+              </label>
+              <span className="selection-count">{selectedCrawlerDataKeys.length} 条已选</span>
+              <Button
+                variant="outline"
+                className="secondary-button danger"
+                onClick={() => void removeSelectedCrawlerDataRecords()}
+                disabled={busyAction !== null || selectedCrawlerDataKeys.length === 0}
+              >
+                <Trash2 size={16} />
+                删除选中
+              </Button>
+              <div className="crawler-data-pagination">
+                <Button
+                  variant="outline"
+                  className="secondary-button"
+                  onClick={() => goToCrawlerDataPage(crawlerDataPage - 1)}
+                  disabled={crawlerDataLoading || !crawlerData?.pageInfo.hasPreviousPage}
+                >
+                  上一页
+                </Button>
+                <span>
+                  {crawlerData?.pageInfo.totalPages
+                    ? `${crawlerData.pageInfo.page} / ${crawlerData.pageInfo.totalPages}`
+                    : "0 / 0"}
+                </span>
+                <Button
+                  variant="outline"
+                  className="secondary-button"
+                  onClick={() => goToCrawlerDataPage(crawlerDataPage + 1)}
+                  disabled={crawlerDataLoading || !crawlerData?.pageInfo.hasNextPage}
+                >
+                  下一页
+                </Button>
+                <label className="page-size-control">
+                  <span>每页</span>
+                  <select
+                    value={crawlerDataPageSize}
+                    onChange={(event) => {
+                      const nextPageSize = Number(event.target.value);
+                      setCrawlerDataPageSize(nextPageSize);
+                      setCrawlerDataPage(1);
+                      setSelectedCrawlerDataRecords({});
+                      void loadCrawlerData(1, nextPageSize);
+                    }}
+                    aria-label="爬取数据每页条数"
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                </label>
+              </div>
+            </div>
             {!crawlerData || crawlerData.records.length === 0 ? (
               <EmptyState
                 title="暂无匹配数据"
@@ -1540,6 +1774,14 @@ export function ConsoleShell() {
               <div className="crawler-data-table">
                 {crawlerData.records.map((record) => (
                   <div className="crawler-data-row" key={record.id}>
+                    <label className="crawler-data-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selectedCrawlerDataRecords[crawlerDataRecordKey(record)])}
+                        onChange={(event) => toggleCrawlerDataRecord(record, event.target.checked)}
+                        aria-label={`选择爬取数据 ${record.title || record.sourceId}`}
+                      />
+                    </label>
                     <div className="crawler-data-main">
                       <div className="crawler-data-title">
                         <strong>{record.title || record.sourceId}</strong>
@@ -1594,14 +1836,8 @@ export function ConsoleShell() {
         {activeSection === "platforms" && (
           <section className="section-band">
             <SectionHeader
-              title="平台策略"
-              subtitle="平台级爬取深度、关键词、评论数量与用户名单"
-              action={
-                <Button className="primary-button" onClick={() => void savePolicy()} disabled={!policyDraft}>
-                  <Save size={16} />
-                  保存策略
-                </Button>
-              }
+              title="平台用户名单"
+              subtitle="按平台维护 allow/block 用户名单"
             />
             <div className="platform-layout">
               <div className="platform-list">
@@ -1619,105 +1855,13 @@ export function ConsoleShell() {
                 ))}
               </div>
 
-              {selectedPlatform && policyDraft && (
+              {selectedPlatform && (
                 <div className="policy-editor">
                   <div className="policy-title">
                     <div>
                       <h3>{selectedPlatform.name}</h3>
                       <span>{selectedPlatform.id} / {selectedPlatform.crawlerType}</span>
                     </div>
-                    <Switch
-                      checked={policyDraft.enabled}
-                      onCheckedChange={(checked) => setPolicyValue("enabled", checked)}
-                      aria-label="启用平台"
-                    />
-                  </div>
-                  <div className="form-grid policy-grid">
-                    <label className="field">
-                      <span>爬取深度</span>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={policyDraft.crawlDepth}
-                        onChange={(event) => setPolicyValue("crawlDepth", Number(event.target.value))}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>关键词上限</span>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={500}
-                        value={policyDraft.maxKeywords}
-                        onChange={(event) => setPolicyValue("maxKeywords", Number(event.target.value))}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>笔记/关键词</span>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={1000}
-                        value={policyDraft.maxNotesPerKeyword}
-                        onChange={(event) => setPolicyValue("maxNotesPerKeyword", Number(event.target.value))}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>评论/笔记</span>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={5000}
-                        value={policyDraft.maxCommentsPerNote}
-                        onChange={(event) => setPolicyValue("maxCommentsPerNote", Number(event.target.value))}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>频率</span>
-                      <select
-                        value={policyDraft.frequency.mode}
-                        onChange={(event) =>
-                          setPolicyValue("frequency", {
-                            ...policyDraft.frequency,
-                            mode: event.target.value as PlatformPolicy["frequency"]["mode"]
-                          })
-                        }
-                      >
-                        <option value="manual">manual</option>
-                        <option value="hourly">hourly</option>
-                        <option value="daily">daily</option>
-                        <option value="weekly">weekly</option>
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span>登录方式</span>
-                      <select
-                        value={policyDraft.loginType}
-                        onChange={(event) =>
-                          setPolicyValue("loginType", event.target.value as PlatformPolicy["loginType"])
-                        }
-                      >
-                        <option value="qrcode">qrcode</option>
-                        <option value="phone">phone</option>
-                        <option value="cookie">cookie</option>
-                      </select>
-                    </label>
-                    <label className="field wide">
-                      <span>关键词</span>
-                      <Textarea
-                        value={policyDraft.keywords.join("\n")}
-                        onChange={(event) =>
-                          setPolicyValue(
-                            "keywords",
-                            event.target.value
-                              .split("\n")
-                              .map((item) => item.trim())
-                              .filter(Boolean)
-                          )
-                        }
-                      />
-                    </label>
                   </div>
                   <div className="identity-manager">
                     <h3>用户名单</h3>

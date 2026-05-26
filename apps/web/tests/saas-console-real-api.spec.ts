@@ -193,6 +193,7 @@ test("creates crawler tasks with explicit keywords and selected platforms", asyn
           startDate: crawlerPayload?.startDate,
           endDate: crawlerPayload?.endDate,
           schedule: crawlerPayload?.schedule,
+          crawlDepth: crawlerPayload?.crawlDepth,
           platforms: crawlerPayload?.platforms,
           keywords: crawlerPayload?.keywords,
           keywordSource: crawlerPayload?.keywordSource,
@@ -225,9 +226,99 @@ test("creates crawler tasks with explicit keywords and selected platforms", asyn
     schedule: { mode: "manual", timezone: "Asia/Shanghai" },
     platforms: ["wb", "xhs"],
     keywords: ["养老服务", "医保支付"],
-    keywordSource: "manual"
+    keywordSource: "manual",
+    crawlDepth: 3
   });
   await expect(page.getByText("爬虫任务已创建")).toBeVisible();
+});
+
+test("polls active crawler tasks until backend completion", async ({ page }) => {
+  let completeCrawlerTask: () => void;
+  const completionReady = new Promise<void>((resolve) => {
+    completeCrawlerTask = resolve;
+  });
+  let crawlerTaskRequests = 0;
+  const runningTask = {
+    id: "crawler_running",
+    workspaceId: "workspace_demo",
+    runMode: "deep_sentiment",
+    status: "running",
+    progress: 75,
+    targetDate: "2026-05-22",
+    startDate: "2026-05-22",
+    endDate: "2026-05-25",
+    schedule: { mode: "manual", timezone: "Asia/Shanghai" },
+    platforms: ["wb"],
+    keywords: ["养老服务"],
+    keywordSource: "manual",
+    stats: {
+      totalKeywords: 1,
+      totalPlatforms: 1,
+      totalTasks: 1,
+      successfulTasks: 0,
+      failedTasks: 0,
+      totalNotes: 12,
+      totalComments: 34
+    },
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  const completedTask = {
+    ...runningTask,
+    status: "succeeded",
+    progress: 100,
+    stats: {
+      ...runningTask.stats,
+      successfulTasks: 1
+    },
+    updatedAt: "2026-05-22T10:05:00Z"
+  };
+
+  await routeJson(page, "/system/components", {
+    success: true,
+    components: [{ id: "mindspider", name: "MindSpider", status: "running" }]
+  });
+  await routeJson(page, "/report-templates", { success: true, templates: [] });
+  await routeJson(page, "/report-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/crawler-strategies", { success: true, strategies: [] });
+  await routeJson(page, "/crawler-accounts", { success: true, accounts: [] });
+  await routeJson(page, "/platforms", {
+    success: true,
+    platforms: [platform("wb", "微博", { allow: 0, block: 0 })]
+  });
+  await routeJson(page, "/system/config", { success: true, fields: [] });
+  await routeJson(page, "/logs?tail=300", { success: true, lines: [] });
+  await page.route(`${apiBase}/platforms/*/identity-lists`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, rules: [] })
+    });
+  });
+  await page.route(`${apiBase}/crawler-tasks`, async (route) => {
+    expect(route.request().method()).toBe("GET");
+    crawlerTaskRequests += 1;
+    if (crawlerTaskRequests > 1) {
+      await completionReady;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        tasks: [crawlerTaskRequests === 1 ? runningTask : completedTask]
+      })
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "爬虫" }).click();
+  const crawlerRow = page.locator(".crawler-row", { hasText: "养老服务" });
+  await expect(crawlerRow).toContainText("running");
+
+  completeCrawlerTask!();
+  await expect(crawlerRow).toContainText("succeeded");
+  expect(crawlerTaskRequests).toBeGreaterThan(1);
 });
 
 test("creates report tasks with selected orchestration engines", async ({ page }) => {
@@ -314,6 +405,93 @@ test("creates report tasks with selected orchestration engines", async ({ page }
   await expect(page.locator(".task-row", { hasText: "多引擎调度验证" })).toContainText(
     "Media Engine / Insight Engine"
   );
+});
+
+test("polls active report tasks until backend completion", async ({ page }) => {
+  let completeReportTask: () => void;
+  const completionReady = new Promise<void>((resolve) => {
+    completeReportTask = resolve;
+  });
+  let reportTaskRequests = 0;
+  const runningTask = {
+    id: "report_running",
+    workspaceId: "workspace_demo",
+    topic: "报告轮询验证",
+    status: "running",
+    progress: 80,
+    stage: "reporting",
+    templateId: "auto",
+    sourceScope: {
+      orchestration: {
+        enabled: true,
+        engines: ["media", "insight"]
+      }
+    },
+    artifacts: [
+      {
+        format: "html",
+        ready: false,
+        filename: "report.html",
+        downloadUrl: "/api/v1/report-tasks/report_running/exports/html"
+      }
+    ],
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+  const completedTask = {
+    ...runningTask,
+    status: "succeeded",
+    progress: 100,
+    stage: "completed",
+    artifacts: runningTask.artifacts.map((artifact) => ({ ...artifact, ready: true })),
+    updatedAt: "2026-05-22T10:05:00Z"
+  };
+
+  await routeJson(page, "/system/components", {
+    success: true,
+    components: [{ id: "report", name: "Report Engine", status: "running" }]
+  });
+  await routeJson(page, "/report-templates", { success: true, templates: [] });
+  await page.route(`${apiBase}/report-tasks`, async (route) => {
+    expect(route.request().method()).toBe("GET");
+    reportTaskRequests += 1;
+    if (reportTaskRequests > 1) {
+      await completionReady;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        tasks: [reportTaskRequests === 1 ? runningTask : completedTask]
+      })
+    });
+  });
+  await routeJson(page, "/crawler-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/crawler-strategies", { success: true, strategies: [] });
+  await routeJson(page, "/crawler-accounts", { success: true, accounts: [] });
+  await routeJson(page, "/platforms", {
+    success: true,
+    platforms: [platform("wb", "微博", { allow: 0, block: 0 })]
+  });
+  await routeJson(page, "/system/config", { success: true, fields: [] });
+  await routeJson(page, "/logs?tail=300", { success: true, lines: [] });
+  await page.route(`${apiBase}/platforms/*/identity-lists`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, rules: [] })
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "报告" }).click();
+  const reportRow = page.locator(".task-row", { hasText: "报告轮询验证" });
+  await expect(reportRow).toContainText("running");
+
+  completeReportTask!();
+  await expect(reportRow).toContainText("succeeded");
+  expect(reportTaskRequests).toBeGreaterThan(1);
 });
 
 test("points report downloads at the API origin with workspace fallback", async ({ page }) => {

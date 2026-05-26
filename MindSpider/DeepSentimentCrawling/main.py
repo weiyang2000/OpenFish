@@ -78,7 +78,12 @@ class DeepSentimentCrawling:
         # 3. 执行全平台关键词爬取
         print(f"\n🔄 开始全平台关键词爬取...")
         crawl_results = self.platform_crawler.run_multi_platform_crawl_by_keywords(
-            keywords, platforms, login_type, max_notes_per_platform
+            keywords,
+            platforms,
+            login_type,
+            max_notes_per_platform,
+            start_date=target_date,
+            end_date=target_date,
         )
         
         # 4. 生成最终报告
@@ -135,7 +140,12 @@ class DeepSentimentCrawling:
         
         # 执行爬取
         result = self.platform_crawler.run_crawler(
-            platform, keywords, login_type, max_notes
+            platform,
+            keywords,
+            login_type,
+            max_notes,
+            start_date=target_date,
+            end_date=target_date,
         )
         
         return result

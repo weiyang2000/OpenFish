@@ -222,6 +222,26 @@ def test_crawler_accounts_are_workspace_scoped_and_page_sized(client: TestClient
     assert other_workspace.json()["accounts"] == []
 
 
+def test_crawler_account_can_be_deleted(client: TestClient):
+    upsert = client.put(
+        "/api/v1/crawler-accounts/acct_delete_me",
+        headers=WORKSPACE_HEADERS,
+        json={"platformId": "wb", "displayName": "待删除账号", "status": "active"},
+    )
+    assert upsert.status_code == 200
+    internal_id = upsert.json()["account"]["id"]
+
+    delete_response = client.delete(
+        f"/api/v1/crawler-accounts/{internal_id}",
+        headers=WORKSPACE_HEADERS,
+    )
+    assert delete_response.status_code == 204
+
+    response = client.get("/api/v1/crawler-accounts", headers=WORKSPACE_HEADERS)
+    assert response.status_code == 200
+    assert response.json()["accounts"] == []
+
+
 def test_crawler_account_rejects_top_level_secret_fields(client: TestClient):
     response = client.put(
         "/api/v1/crawler-accounts/wb_secret",
@@ -473,6 +493,22 @@ def test_headless_login_session_publishes_qrcode_preview(
     assert session["loginPreviewKind"] == "qrcode"
 
 
+def test_login_state_markers_do_not_accept_visitor_cookies():
+    assert not AccountService._has_required_login_state("xhs", {"a1": "visitor-cookie"})
+    assert not AccountService._has_required_login_state(
+        "xhs",
+        {"web_session": "unchanged"},
+        {"web_session": "unchanged"},
+    )
+    assert AccountService._has_required_login_state(
+        "xhs",
+        {"web_session": "after-scan"},
+        {"web_session": "before-scan"},
+    )
+    assert not AccountService._has_required_login_state("ks", {"did": "visitor-device"})
+    assert AccountService._has_required_login_state("ks", {"passToken": "auth-token"})
+
+
 def test_crawler_data_search_reads_crawler_tables(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -550,6 +586,100 @@ def test_crawler_data_search_reads_crawler_tables(
     )
     assert invalid_delete.status_code == 400
     assert invalid_delete.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_crawler_data_paginates_and_batch_deletes_records(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    store = client.app.state.store
+    monkeypatch.setenv("BETTAFISH_CRAWLER_SQLITE_PATH", store.db_path)
+    store.execute(
+        """
+        CREATE TABLE weibo_note (
+            id INTEGER PRIMARY KEY,
+            note_id TEXT,
+            content TEXT,
+            nickname TEXT,
+            source_keyword TEXT,
+            create_time INTEGER,
+            add_ts INTEGER,
+            liked_count TEXT,
+            comments_count TEXT
+        )
+        """
+    )
+    for index in range(5):
+        store.execute(
+            """
+            INSERT INTO weibo_note (
+                note_id, content, nickname, source_keyword, create_time,
+                add_ts, liked_count, comments_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"note_{index}",
+                f"分页测试内容 {index}",
+                "tester",
+                "分页测试",
+                1760000000 + index,
+                1760000100 + index,
+                str(index),
+                "0",
+            ),
+        )
+
+    response = client.get(
+        "/api/v1/crawler-data?platform=wb&contentType=content&page=2&pageSize=2",
+        headers=WORKSPACE_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"]["totalRecords"] == 5
+    assert body["pageInfo"] == {
+        "page": 2,
+        "pageSize": 2,
+        "totalRecords": 5,
+        "totalPages": 3,
+        "hasPreviousPage": True,
+        "hasNextPage": True,
+    }
+    assert [record["sourceId"] for record in body["records"]] == ["note_2", "note_1"]
+
+    delete_response = client.post(
+        "/api/v1/crawler-data:delete",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "records": [
+                {
+                    "tableName": "weibo_note",
+                    "sourceId": "note_2",
+                    "platform": "wb",
+                    "contentType": "content",
+                },
+                {
+                    "tableName": "weibo_note",
+                    "sourceId": "note_1",
+                    "platform": "wb",
+                    "contentType": "content",
+                },
+            ]
+        },
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] == 2
+
+    response = client.get(
+        "/api/v1/crawler-data?platform=wb&contentType=content&page=1&pageSize=10",
+        headers=WORKSPACE_HEADERS,
+    )
+    assert response.status_code == 200
+    assert response.json()["summary"]["totalRecords"] == 3
+    assert {record["sourceId"] for record in response.json()["records"]} == {
+        "note_0",
+        "note_3",
+        "note_4",
+    }
 
 
 def test_crawler_data_does_not_read_sqlite_without_explicit_opt_in(
@@ -1177,18 +1307,19 @@ def test_crawler_task_stop_retry_and_conflict(client: TestClient):
         "/api/v1/crawler-tasks",
         headers=WORKSPACE_HEADERS,
         json={
-            "runMode": "deep_sentiment",
             "targetDate": "2026-05-22",
             "platforms": ["wb", "xhs"],
             "keywords": ["养老服务", "医保支付"],
-            "keywordSource": "manual",
+            "crawlDepth": 5,
         },
     )
     assert create_response.status_code == 202
     task = create_response.json()["task"]
     task_id = task["id"]
+    assert task["runMode"] == "deep_sentiment"
     assert task["keywords"] == ["养老服务", "医保支付"]
     assert task["keywordSource"] == "manual"
+    assert task["crawlDepth"] == 5
     assert task["startDate"] == "2026-05-22"
     assert task["endDate"] == "2026-05-22"
     assert task["schedule"]["mode"] == "manual"
@@ -1448,16 +1579,22 @@ def test_real_crawler_uses_cookie_login_when_active_account_exists(
             platforms: list[str],
             *,
             login_type: str,
+            crawl_depth: int,
             max_notes_per_keyword: int,
             headless: bool,
+            start_date: str | None,
+            end_date: str | None,
         ) -> dict[str, Any]:
             calls.append(
                 {
                     "keywords": keywords,
                     "platforms": platforms,
                     "loginType": login_type,
+                    "crawlDepth": crawl_depth,
                     "maxNotesPerKeyword": max_notes_per_keyword,
                     "headless": headless,
+                    "startDate": start_date,
+                    "endDate": end_date,
                 }
             )
             return {
@@ -1494,7 +1631,10 @@ def test_real_crawler_uses_cookie_login_when_active_account_exists(
     stats = task_service._run_real_crawler(task)
 
     assert calls[0]["loginType"] == "cookie"
+    assert calls[0]["crawlDepth"] == task["crawlDepth"]
     assert calls[0]["headless"] is True
+    assert calls[0]["startDate"] == task["startDate"]
+    assert calls[0]["endDate"] == task["endDate"]
     assert stats["totalNotes"] == 3
 
 
@@ -1512,10 +1652,13 @@ def test_real_crawler_streams_adapter_logs_to_task_events(
             platforms: list[str],
             *,
             login_type: str,
+            crawl_depth: int,
             max_notes_per_keyword: int,
             headless: bool,
+            start_date: str | None,
+            end_date: str | None,
         ) -> dict[str, Any]:
-            del login_type, max_notes_per_keyword, headless
+            del login_type, crawl_depth, max_notes_per_keyword, headless, start_date, end_date
             assert self.log_callback is not None
             self.log_callback("stdout", "MediaCrawler INFO started")
             self.log_callback("stderr", "MediaCrawler ERROR sample")
@@ -1569,6 +1712,26 @@ def test_real_crawler_requires_active_account_for_workspace_task(client: TestCli
 
     with pytest.raises(RuntimeError, match="No active crawler account"):
         task_service._run_real_crawler(task)
+
+
+def test_real_crawler_ignores_active_account_with_only_visitor_state(client: TestClient):
+    response = client.put(
+        "/api/v1/crawler-accounts/xhs_visitor_only",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "platformId": "xhs",
+            "displayName": "误登记小红书账号",
+            "status": "active",
+            "details": {"stateNames": ["a1", "webId"]},
+        },
+    )
+    assert response.status_code == 200
+
+    task_service: TaskService = client.app.state.task_service
+    task = _create_crawler_task(client, ["xhs"], run_mode="deep_sentiment")
+
+    with pytest.raises(RuntimeError, match="No active crawler account"):
+        task_service._crawler_login_type(task)
 
 
 def test_task_service_repairs_interrupted_running_crawler_task(client: TestClient):

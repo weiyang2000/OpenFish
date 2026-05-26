@@ -25,6 +25,7 @@
 import re
 from typing import List
 
+from tools import date_filter
 from var import source_keyword_var
 
 from .weibo_store_media import *
@@ -75,7 +76,10 @@ async def update_weibo_note(note_item: Dict):
 
     """
     if not note_item:
-        return
+        return False
+    if not date_filter.should_keep_content("wb", note_item):
+        utils.logger.info("[store.weibo.update_weibo_note] skip note outside configured date range")
+        return False
 
     mblog: Dict = note_item.get("mblog")
     user_info: Dict = mblog.get("user")
@@ -105,6 +109,7 @@ async def update_weibo_note(note_item: Dict):
     }
     utils.logger.info(f"[store.weibo.update_weibo_note] weibo note id:{note_id}, title:{save_content_item.get('content')[:24]} ...")
     await WeibostoreFactory.create_store().store_content(content_item=save_content_item)
+    return True
 
 
 async def batch_update_weibo_note_comments(note_id: str, comments: List[Dict]):
@@ -134,7 +139,10 @@ async def update_weibo_note_comment(note_id: str, comment_item: Dict):
 
     """
     if not comment_item or not note_id:
-        return
+        return False
+    if not date_filter.should_keep_comment("wb", comment_item):
+        utils.logger.info("[store.weibo.update_weibo_note_comment] skip comment outside configured date range")
+        return False
     comment_id = str(comment_item.get("id"))
     user_info: Dict = comment_item.get("user")
     content_text = comment_item.get("text")
@@ -160,6 +168,7 @@ async def update_weibo_note_comment(note_id: str, comment_item: Dict):
     }
     utils.logger.info(f"[store.weibo.update_weibo_note_comment] Weibo note comment: {comment_id}, content: {save_comment_item.get('content', '')[:24]} ...")
     await WeibostoreFactory.create_store().store_comment(comment_item=save_comment_item)
+    return True
 
 
 async def update_weibo_note_image(picid: str, pic_content, extension_file_name):

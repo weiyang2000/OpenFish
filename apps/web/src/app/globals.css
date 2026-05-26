@@ -838,7 +838,7 @@ a {
   padding: 14px 16px;
   border-bottom: 1px solid var(--line);
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 150px 150px minmax(220px, 1fr);
+  grid-template-columns: minmax(220px, 1fr) 150px 150px minmax(220px, 1fr) 44px;
   align-items: center;
   gap: 14px;
 }
@@ -883,10 +883,15 @@ a {
 }
 
 .account-meta,
-.account-detail {
+.account-detail,
+.account-actions {
   min-width: 0;
   display: grid;
   gap: 6px;
+}
+
+.account-actions {
+  justify-content: end;
 }
 
 .data-filters {
@@ -903,6 +908,56 @@ a {
   margin-bottom: 18px;
 }
 
+.crawler-data-toolbar {
+  min-height: 48px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.checkbox-row,
+.crawler-data-checkbox,
+.page-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-row,
+.selection-count,
+.page-size-control {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.crawler-data-pagination {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.crawler-data-pagination > span {
+  min-width: 68px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.page-size-control select {
+  min-height: 36px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--ink);
+  padding: 0 10px;
+}
+
 .crawler-data-table {
   display: grid;
   border: 1px solid var(--line);
@@ -914,7 +969,7 @@ a {
 
 .crawler-data-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.24fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) minmax(160px, 0.24fr) auto;
   gap: 14px;
   align-items: center;
   padding: 16px;

@@ -24,6 +24,7 @@
 from typing import List
 
 import config
+from tools import date_filter
 from var import source_keyword_var
 
 from ._store_impl import *
@@ -154,6 +155,9 @@ def _extract_music_download_url(aweme_detail: Dict) -> str:
 
 
 async def update_douyin_aweme(aweme_item: Dict):
+    if not date_filter.should_keep_content("dy", aweme_item):
+        utils.logger.info("[store.douyin.update_douyin_aweme] skip aweme outside configured date range")
+        return False
     aweme_id = aweme_item.get("aweme_id")
     user_info = aweme_item.get("author", {})
     interact_info = aweme_item.get("statistics", {})
@@ -185,6 +189,7 @@ async def update_douyin_aweme(aweme_item: Dict):
     }
     utils.logger.info(f"[store.douyin.update_douyin_aweme] douyin aweme id:{aweme_id}, title:{save_content_item.get('title')}")
     await DouyinStoreFactory.create_store().store_content(content_item=save_content_item)
+    return True
 
 
 async def batch_update_dy_aweme_comments(aweme_id: str, comments: List[Dict]):
@@ -195,10 +200,13 @@ async def batch_update_dy_aweme_comments(aweme_id: str, comments: List[Dict]):
 
 
 async def update_dy_aweme_comment(aweme_id: str, comment_item: Dict):
+    if not date_filter.should_keep_comment("dy", comment_item):
+        utils.logger.info("[store.douyin.update_dy_aweme_comment] skip comment outside configured date range")
+        return False
     comment_aweme_id = comment_item.get("aweme_id")
     if aweme_id != comment_aweme_id:
         utils.logger.error(f"[store.douyin.update_dy_aweme_comment] comment_aweme_id: {comment_aweme_id} != aweme_id: {aweme_id}")
-        return
+        return False
     user_info = comment_item.get("user", {})
     comment_id = comment_item.get("cid")
     parent_comment_id = comment_item.get("reply_id", "0")
@@ -225,6 +233,7 @@ async def update_dy_aweme_comment(aweme_id: str, comment_item: Dict):
     utils.logger.info(f"[store.douyin.update_dy_aweme_comment] douyin aweme comment: {comment_id}, content: {save_comment_item.get('content')}")
 
     await DouyinStoreFactory.create_store().store_comment(comment_item=save_comment_item)
+    return True
 
 
 async def save_creator(user_id: str, creator: Dict):

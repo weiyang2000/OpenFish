@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from dataclasses import dataclass
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -77,12 +78,17 @@ class CrawlerDataService:
         platform: str | None = None,
         content_type: str | None = None,
         query: str | None = None,
+        page: int = 1,
         page_size: int = 50,
     ) -> dict[str, Any]:
         if platform and platform not in PLATFORM_IDS:
             raise ApiError("VALIDATION_ERROR", f"Unsupported platform: {platform}", status_code=400)
         if content_type and content_type not in {"content", "comment"}:
             raise ApiError("VALIDATION_ERROR", "Unsupported crawler data type", status_code=400)
+        if page < 1:
+            raise ApiError("VALIDATION_ERROR", "page must be greater than or equal to 1", status_code=400)
+        if page_size < 1 or page_size > 200:
+            raise ApiError("VALIDATION_ERROR", "pageSize must be between 1 and 200", status_code=400)
 
         specs = [
             spec
@@ -96,7 +102,7 @@ class CrawlerDataService:
         messages: list[str] = []
 
         try:
-            external_records, external_source = self._query_external(specs, query, page_size)
+            external_records, external_source = self._query_external(specs, query)
             if external_source:
                 sources.append(external_source)
             records.extend(external_records)
@@ -105,13 +111,14 @@ class CrawlerDataService:
 
         source = self._sqlite_source()
         if source:
-            records.extend(self._query_sqlite(source, specs, query, page_size))
+            records.extend(self._query_sqlite(source, specs, query))
             sources.append(str(source))
 
         if not sources:
             return {
                 "records": [],
                 "summary": self._summary([]),
+                "pageInfo": self._page_info(0, page, page_size),
                 "source": "unavailable",
                 "message": "未发现可读取的爬取数据库",
             }
@@ -119,9 +126,13 @@ class CrawlerDataService:
         records.sort(key=lambda item: item.get("sortValue") or "", reverse=True)
         for record in records:
             record.pop("sortValue", None)
+        total_records = len(records)
+        start = (page - 1) * page_size
+        end = start + page_size
         return {
-            "records": records[:page_size],
+            "records": records[start:end],
             "summary": self._summary(records),
+            "pageInfo": self._page_info(total_records, page, page_size),
             "source": ", ".join(sources),
             **({"message": "；".join(messages)} if messages else {}),
         }
@@ -172,6 +183,50 @@ class CrawlerDataService:
 
         return {"deleted": deleted, "sources": sources}
 
+    def delete_records(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        deleted = 0
+        deleted_records: list[dict[str, str]] = []
+        failed_records: list[dict[str, str]] = []
+        sources: set[str] = set()
+
+        for record in records:
+            table_name = str(record.get("tableName") or "")
+            source_id = str(record.get("sourceId") or "")
+            platform = record.get("platform")
+            content_type = record.get("contentType")
+            try:
+                result = self.delete_record(
+                    table_name=table_name,
+                    source_id=source_id,
+                    platform=str(platform) if platform else None,
+                    content_type=str(content_type) if content_type else None,
+                )
+                deleted += int(result.get("deleted") or 0)
+                sources.update(str(source) for source in result.get("sources", []))
+                deleted_records.append({"tableName": table_name, "sourceId": source_id})
+            except ApiError as exc:
+                failed_records.append({
+                    "tableName": table_name,
+                    "sourceId": source_id,
+                    "code": exc.code,
+                    "message": exc.message,
+                })
+
+        if deleted == 0 and failed_records:
+            raise ApiError(
+                failed_records[0].get("code") or "NOT_FOUND",
+                failed_records[0].get("message") or "Crawler data records not found",
+                status_code=404 if all(item.get("code") == "NOT_FOUND" for item in failed_records) else 400,
+                details={"failedRecords": failed_records},
+            )
+
+        return {
+            "deleted": deleted,
+            "deletedRecords": deleted_records,
+            "failedRecords": failed_records,
+            "sources": sorted(sources),
+        }
+
     @staticmethod
     def _resolve_spec(
         *,
@@ -215,7 +270,6 @@ class CrawlerDataService:
         db_path: Path,
         specs: list[TableSpec],
         query: str | None,
-        page_size: int,
     ) -> list[dict[str, Any]]:
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -225,7 +279,7 @@ class CrawlerDataService:
                 columns = table_columns.get(spec.table)
                 if not columns or spec.source_id not in columns:
                     continue
-                records.extend(self._query_table(conn, columns, spec, query, page_size))
+                records.extend(self._query_table(conn, columns, spec, query))
 
         records.sort(key=lambda item: item.get("sortValue") or "", reverse=True)
         return records
@@ -252,7 +306,6 @@ class CrawlerDataService:
         self,
         specs: list[TableSpec],
         query: str | None,
-        page_size: int,
     ) -> tuple[list[dict[str, Any]], str | None]:
         db_url = self._external_db_url()
         if not db_url:
@@ -311,7 +364,7 @@ class CrawlerDataService:
                     (column for column in (spec.scraped_at, spec.created_at, "id") if column and column in columns),
                     selected[0],
                 )
-                stmt = stmt.order_by(desc(table.c[order_column])).limit(page_size)
+                stmt = stmt.order_by(desc(table.c[order_column]))
                 rows = conn.execute(stmt).mappings().all()
                 records.extend(self._record_from_row(spec, dict(row)) for row in rows)
         engine.dispose()
@@ -380,7 +433,6 @@ class CrawlerDataService:
         columns: set[str],
         spec: TableSpec,
         query: str | None,
-        page_size: int,
     ) -> list[dict[str, Any]]:
         selected = sorted(
             {
@@ -419,18 +471,28 @@ class CrawlerDataService:
             (column for column in (spec.scraped_at, spec.created_at, "id") if column and column in columns),
             selected[0],
         )
-        params.append(page_size)
         rows = conn.execute(
             f"""
             SELECT {", ".join(selected)}
             FROM {spec.table}
             {where}
             ORDER BY {order_column} DESC
-            LIMIT ?
             """,
             params,
         ).fetchall()
         return [self._record_from_row(spec, dict(row)) for row in rows]
+
+    @staticmethod
+    def _page_info(total_records: int, page: int, page_size: int) -> dict[str, Any]:
+        total_pages = ceil(total_records / page_size) if total_records else 0
+        return {
+            "page": page,
+            "pageSize": page_size,
+            "totalRecords": total_records,
+            "totalPages": total_pages,
+            "hasPreviousPage": page > 1 and total_pages > 0,
+            "hasNextPage": total_pages > 0 and page < total_pages,
+        }
 
     @staticmethod
     def _sentiment_columns(columns: set[str]) -> set[str]:

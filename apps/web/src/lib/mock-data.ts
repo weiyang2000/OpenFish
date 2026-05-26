@@ -208,6 +208,7 @@ export const crawlerTasks: CrawlerTask[] = [
       mode: "daily",
       timezone: "Asia/Shanghai"
     },
+    crawlDepth: 3,
     platforms: ["wb", "xhs", "zhihu"],
     keywords: ["养老服务", "医保支付", "养老院"],
     keywordSource: "manual",
@@ -241,6 +242,7 @@ export const crawlerTasks: CrawlerTask[] = [
       mode: "hourly",
       timezone: "Asia/Shanghai"
     },
+    crawlDepth: 3,
     platforms: ["dy", "bili"],
     keywords: ["AI 教育硬件", "学习机口碑"],
     keywordSource: "manual",

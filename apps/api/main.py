@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from apps.api.schemas import (
     ApiError,
     CreateCrawlerAccountLoginSessionRequest,
+    CrawlerDataBatchDeleteRequest,
     CrawlerAccountUpsertRequest,
     CreateCrawlerTaskRequest,
     CreateReportTaskRequest,
@@ -431,6 +432,15 @@ def build_router() -> APIRouter:
         )
         return {"success": True, "account": account}
 
+    @router.delete("/crawler-accounts/{accountId}", status_code=204)
+    def delete_crawler_account(
+        accountId: str,
+        request: Request,
+        workspace_id: str = Depends(workspace_header),
+    ) -> Response:
+        request.app.state.account_service.delete_account(workspace_id, accountId)
+        return Response(status_code=204)
+
     @router.post("/crawler-accounts/login-sessions", status_code=202)
     def create_crawler_account_login_session(
         payload: CreateCrawlerAccountLoginSessionRequest,
@@ -456,12 +466,14 @@ def build_router() -> APIRouter:
         platform: str | None = None,
         content_type: str | None = Query(None, alias="contentType"),
         q: str | None = None,
+        page: int = Query(1, ge=1),
         page_size: int = Query(50, alias="pageSize", ge=1, le=200),
     ) -> dict[str, Any]:
         page = request.app.state.crawler_data_service.list_records(
             platform=platform,
             content_type=content_type,
             query=q,
+            page=page,
             page_size=page_size,
         )
         return {"success": True, **page}
@@ -480,6 +492,17 @@ def build_router() -> APIRouter:
             source_id=source_id,
             platform=platform,
             content_type=content_type,
+        )
+        return {"success": True, **result}
+
+    @router.post("/crawler-data:delete")
+    def delete_crawler_data_records(
+        payload: CrawlerDataBatchDeleteRequest,
+        request: Request,
+        _: str = Depends(workspace_header),
+    ) -> dict[str, Any]:
+        result = request.app.state.crawler_data_service.delete_records(
+            [item.model_dump(mode="json") for item in payload.records]
         )
         return {"success": True, **result}
 

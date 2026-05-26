@@ -5,12 +5,18 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Callable
 
 from loguru import logger
 from sqlalchemy import MetaData, Table, and_, create_engine, inspect, or_, select, update
 from sqlalchemy.engine import Engine
 
+from MindSpider.DeepSentimentCrawling.crawler_record_filters import (
+    date_columns_for_table,
+    normalize_date_range,
+    row_matches_date_range,
+)
 from utils.runtime_database import load_runtime_database_config
 
 
@@ -72,6 +78,18 @@ def _signed_score(label: str, confidence: Any) -> float:
     return 0.0
 
 
+def _unique_columns(columns: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    unique: list[Any] = []
+    for column in columns:
+        key = getattr(column, "key", str(column))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(column)
+    return unique
+
+
 class CrawlerSentimentPostProcessor:
     """Analyze unprocessed crawler rows and persist normalized sentiment fields."""
 
@@ -81,11 +99,16 @@ class CrawlerSentimentPostProcessor:
         database_url: str | None = None,
         batch_size: int | None = None,
         analyzer_factory: Callable[[], Any] | None = None,
+        start_date: str | date | None = None,
+        end_date: str | date | None = None,
+        touched_since_ms: int | None = None,
     ) -> None:
         self.database_url = database_url
         self.batch_size = batch_size or int(os.getenv("CRAWLER_SENTIMENT_BATCH_SIZE", "200"))
         self.analyzer_factory = analyzer_factory
         self._analyzer: Any | None = None
+        self.date_range = normalize_date_range(start_date, end_date)
+        self.touched_since_ms = touched_since_ms
 
     def run_for_platform(self, platform: str) -> dict[str, Any]:
         specs = [spec for spec in SENTIMENT_TABLE_SPECS if spec.platform == platform]
@@ -173,8 +196,11 @@ class CrawlerSentimentPostProcessor:
         if not text_columns:
             return {"processed": 0, "updated": 0, "failed": 0}
 
-        rows = conn.execute(
-            select(table.c.id, *text_columns)
+        date_column_names = date_columns_for_table(spec.table)
+        date_columns = [table.c[column] for column in date_column_names if column in table.c]
+        selected_columns = [table.c.id, *text_columns, *date_columns]
+        statement = (
+            select(*_unique_columns(selected_columns))
             .where(
                 and_(
                     or_(
@@ -183,11 +209,20 @@ class CrawlerSentimentPostProcessor:
                         table.c.sentiment_score.is_(None),
                     ),
                     or_(*(column.is_not(None) for column in text_columns)),
+                    self._touched_clause(table),
                 )
             )
             .order_by(table.c.id.desc())
-            .limit(self.batch_size)
-        ).mappings().all()
+            .limit(self.batch_size * 5 if self.date_range else self.batch_size)
+        )
+        rows = conn.execute(statement).mappings().all()
+        if self.date_range and date_column_names:
+            start, end = self.date_range
+            rows = [
+                row
+                for row in rows
+                if row_matches_date_range(row, date_column_names, start, end)
+            ][: self.batch_size]
         if not rows:
             return {"processed": 0, "updated": 0, "failed": 0}
 
@@ -242,6 +277,18 @@ class CrawlerSentimentPostProcessor:
             analyzer.initialize()
         return analyzer.analyze_batch(texts, show_progress=False)
 
+    def _touched_clause(self, table: Table) -> Any:
+        if self.touched_since_ms is None:
+            return True
+        columns = [
+            table.c[column]
+            for column in ("last_modify_ts", "add_ts")
+            if column in table.c
+        ]
+        if not columns:
+            return False
+        return or_(*(column >= self.touched_since_ms for column in columns))
+
     def _get_analyzer(self) -> Any:
         if self._analyzer is not None:
             return self._analyzer
@@ -254,11 +301,21 @@ class CrawlerSentimentPostProcessor:
         return self._analyzer
 
 
-def run_crawler_sentiment_postprocessing(platform: str) -> dict[str, Any]:
+def run_crawler_sentiment_postprocessing(
+    platform: str,
+    *,
+    start_date: str | date | None = None,
+    end_date: str | date | None = None,
+    touched_since_ms: int | None = None,
+) -> dict[str, Any]:
     if os.getenv("CRAWLER_SENTIMENT_ENABLED", "true").strip().lower() in {"0", "false", "no", "off"}:
         return {"processed": 0, "updated": 0, "failed": 0, "disabled": True, "tables": {}}
     try:
-        return CrawlerSentimentPostProcessor().run_for_platform(platform)
+        return CrawlerSentimentPostProcessor(
+            start_date=start_date,
+            end_date=end_date,
+            touched_since_ms=touched_since_ms,
+        ).run_for_platform(platform)
     except Exception as exc:
         logger.exception(f"爬虫情绪后处理失败: {exc}")
         return {
