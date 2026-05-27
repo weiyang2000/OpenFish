@@ -167,18 +167,44 @@ def test_report_task_accepts_single_and_multiple_orchestration_engines(client: T
     )
     assert single.status_code == 202
     assert single.json()["task"]["sourceScope"]["orchestration"]["engines"] == ["query"]
+    assert single.json()["task"]["sourceScope"]["orchestration"]["insightMode"] == "normal"
 
     multiple = client.post(
         "/api/v1/report-tasks",
         headers=WORKSPACE_HEADERS,
         json={
             "topic": "多引擎报告",
-            "sourceScope": {"orchestration": {"enabled": True, "engines": ["query", "media"]}},
+            "sourceScope": {
+                "orchestration": {
+                    "enabled": True,
+                    "engines": ["query", "media", "insight"],
+                    "insightMode": "deep",
+                }
+            },
             "outputFormats": ["html"],
         },
     )
     assert multiple.status_code == 202
-    assert multiple.json()["task"]["sourceScope"]["orchestration"]["engines"] == ["query", "media"]
+    assert multiple.json()["task"]["sourceScope"]["orchestration"]["engines"] == [
+        "query",
+        "media",
+        "insight",
+    ]
+    assert multiple.json()["task"]["sourceScope"]["orchestration"]["insightMode"] == "deep"
+
+    multiple_task_id = multiple.json()["task"]["id"]
+    client.app.state.task_service.store.execute(
+        "UPDATE report_tasks SET status = 'succeeded', stage = 'completed' WHERE id = ?",
+        (multiple_task_id,),
+    )
+    rerun = client.post(
+        f"/api/v1/report-tasks/{multiple_task_id}:rerun",
+        headers=WORKSPACE_HEADERS,
+        json={"engines": ["insight"]},
+    )
+    assert rerun.status_code == 202
+    assert rerun.json()["task"]["sourceScope"]["orchestration"]["engines"] == ["insight"]
+    assert rerun.json()["task"]["sourceScope"]["orchestration"]["insightMode"] == "deep"
 
     empty = client.post(
         "/api/v1/report-tasks",
@@ -191,6 +217,24 @@ def test_report_task_accepts_single_and_multiple_orchestration_engines(client: T
     )
     assert empty.status_code == 422
     assert empty.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    invalid_mode = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "无效 Insight 模式报告",
+            "sourceScope": {
+                "orchestration": {
+                    "enabled": True,
+                    "engines": ["insight"],
+                    "insightMode": "turbo",
+                }
+            },
+            "outputFormats": ["html"],
+        },
+    )
+    assert invalid_mode.status_code == 422
+    assert invalid_mode.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 def test_crawler_strategy_contract_sample_preserves_platform_id(

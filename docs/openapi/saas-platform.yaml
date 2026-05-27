@@ -267,6 +267,7 @@ paths:
                     includeForumLog: true
                     orchestration:
                       enabled: true
+                      insightMode: normal
                       engines: [query, media]
                   outputFormats: [html, md, pdf]
                   owner:
@@ -1154,6 +1155,12 @@ components:
       type: string
       enum: [query, media, insight]
 
+    ReportInsightMode:
+      type: string
+      enum: [fast, normal, deep]
+      default: normal
+      description: Insight Engine depth for report orchestration. Ignored by Query/Media when Insight is not selected.
+
     ComponentStatus:
       type: string
       enum: [unknown, stopped, starting, running, degraded, failed, stopping]
@@ -1543,6 +1550,8 @@ components:
           type: string
           enum: [single_engine, multi_engine]
           example: multi_engine
+        insightMode:
+          $ref: "#/components/schemas/ReportInsightMode"
         status:
           type: string
           enum: [queued, running, succeeded, failed]

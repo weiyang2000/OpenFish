@@ -293,6 +293,7 @@ export async function rerunReportTask(taskId: string, input: RerunReportTaskInpu
 
   const task = reportTasks.find((item) => item.id === taskId);
   if (!task) throw new Error("Task not found");
+  const insightMode = task.sourceScope?.orchestration?.insightMode ?? "normal";
   task.status = "queued";
   task.progress = 0;
   task.stage = "queued";
@@ -300,7 +301,8 @@ export async function rerunReportTask(taskId: string, input: RerunReportTaskInpu
     ...(task.sourceScope ?? {}),
     orchestration: {
       enabled: true,
-      engines: input.engines
+      engines: input.engines,
+      insightMode
     }
   };
   task.artifacts = task.artifacts.map((artifact) => ({ ...artifact, ready: false }));

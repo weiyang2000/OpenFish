@@ -32,6 +32,8 @@ export type ReportFormat = "html" | "json" | "md" | "pdf";
 
 export type ReportEngineId = "query" | "media" | "insight";
 
+export type ReportInsightMode = "fast" | "normal" | "deep";
+
 export type RunMode = "topic_extraction" | "deep_sentiment" | "full_workflow";
 
 export type IdentityListType = "allow" | "block";
@@ -120,6 +122,7 @@ export interface ReportTask {
     orchestration?: {
       enabled?: boolean;
       mode?: string;
+      insightMode?: ReportInsightMode;
       status?: string;
       workspacePath?: string;
       rerunEngines?: ReportEngineId[];
@@ -411,6 +414,7 @@ export interface CreateReportTaskInput {
     orchestration?: {
       enabled?: boolean;
       engines: ReportEngineId[];
+      insightMode?: ReportInsightMode;
     };
   };
   outputFormats: ReportFormat[];
