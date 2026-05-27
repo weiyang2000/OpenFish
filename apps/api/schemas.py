@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 PLATFORM_IDS = ("xhs", "dy", "ks", "bili", "wb", "tieba", "zhihu")
 COMPONENT_IDS = ("query", "media", "insight", "forum", "report", "mindspider", "database")
 REPORT_FORMATS = ("html", "json", "md", "pdf")
+REPORT_INSIGHT_MODES = ("fast", "normal", "deep")
 REPORT_STATUSES = ("queued", "pending", "running", "succeeded", "failed", "cancelled")
 CRAWLER_STATUSES = (
     "queued",
@@ -25,7 +26,6 @@ CRAWLER_STATUSES = (
 )
 RUN_MODES = ("topic_extraction", "deep_sentiment", "full_workflow")
 KEYWORD_SOURCES = ("manual", "broad_topic_extraction", "mixed")
-INSIGHT_MODES = ("fast", "normal", "deep")
 CRAWLER_ACCOUNT_STATUSES = (
     "active",
     "login_required",

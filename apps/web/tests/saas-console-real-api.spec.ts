@@ -323,6 +323,7 @@ test("polls active crawler tasks until backend completion", async ({ page }) => 
 
 test("creates report tasks with selected orchestration engines", async ({ page }) => {
   let reportPayload: Record<string, unknown> | undefined;
+  let reportTasks: Record<string, unknown>[] = [];
 
   await routeJson(page, "/system/components", {
     success: true,
@@ -339,31 +340,33 @@ test("creates report tasks with selected orchestration engines", async ({ page }
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ success: true, tasks: [] })
+        body: JSON.stringify({ success: true, tasks: reportTasks })
       });
       return;
     }
 
     expect(route.request().method()).toBe("POST");
     reportPayload = route.request().postDataJSON();
+    const task = {
+      id: "report_new",
+      workspaceId: "workspace_demo",
+      topic: reportPayload?.topic,
+      status: "queued",
+      progress: 0,
+      stage: "queued",
+      templateId: reportPayload?.templateId,
+      sourceScope: reportPayload?.sourceScope,
+      artifacts: [{ format: "html", ready: false }],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    reportTasks = [task];
     await route.fulfill({
       status: 202,
       contentType: "application/json",
       body: JSON.stringify({
         success: true,
-        task: {
-          id: "report_new",
-          workspaceId: "workspace_demo",
-          topic: reportPayload?.topic,
-          status: "queued",
-          progress: 0,
-          stage: "queued",
-          templateId: reportPayload?.templateId,
-          sourceScope: reportPayload?.sourceScope,
-          artifacts: [{ format: "html", ready: false }],
-          createdAt: timestamp,
-          updatedAt: timestamp
-        }
+        task
       })
     });
   });
@@ -387,6 +390,7 @@ test("creates report tasks with selected orchestration engines", async ({ page }
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "报告" }).click();
   await page.getByPlaceholder("输入报告主题").fill("多引擎调度验证");
+  await page.getByRole("radio", { name: "Fast" }).check();
   await page.getByLabel("Query Engine").uncheck();
   await page.getByRole("button", { name: "创建报告" }).click();
 
@@ -396,6 +400,7 @@ test("creates report tasks with selected orchestration engines", async ({ page }
     sourceScope: {
       orchestration: {
         enabled: true,
+        insightMode: "fast",
         engines: ["media", "insight"]
       }
     },
@@ -405,6 +410,7 @@ test("creates report tasks with selected orchestration engines", async ({ page }
   await expect(page.locator(".task-row", { hasText: "多引擎调度验证" })).toContainText(
     "Media Engine / Insight Engine"
   );
+  await expect(page.locator(".task-row", { hasText: "多引擎调度验证" })).toContainText("Insight Fast");
 });
 
 test("polls active report tasks until backend completion", async ({ page }) => {

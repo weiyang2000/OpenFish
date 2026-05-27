@@ -19,8 +19,8 @@ from apps.api.schemas import (
     CreateCrawlerTaskRequest,
     CreateReportTaskRequest,
     CrawlerStrategyInput,
-    INSIGHT_MODES,
     REPORT_FORMATS,
+    REPORT_INSIGHT_MODES,
     UserRef,
 )
 from apps.api.services.common import new_id, slugify_filename, utc_now
@@ -1095,9 +1095,7 @@ class TaskService:
     def _report_insight_mode(source_scope: dict[str, Any]) -> str:
         orchestration = source_scope.get("orchestration") or {}
         mode = orchestration.get("insightMode") or "normal"
-        if mode in INSIGHT_MODES:
-            return mode
-        return "normal"
+        return mode if mode in REPORT_INSIGHT_MODES else "normal"
 
     def _update_report_orchestration(
         self,

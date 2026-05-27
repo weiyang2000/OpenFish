@@ -267,6 +267,7 @@ paths:
                     includeForumLog: true
                     orchestration:
                       enabled: true
+                      insightMode: normal
                       engines: [query, media]
                   outputFormats: [html, md, pdf]
                   owner:
