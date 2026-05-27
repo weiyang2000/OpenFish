@@ -404,6 +404,8 @@ DB_DIALECT=postgresql
 INSIGHT_ENGINE_API_KEY=
 INSIGHT_ENGINE_BASE_URL=
 INSIGHT_ENGINE_MODEL_NAME=
+# 可选：fast（短报告）、normal（默认完整报告）、deep（更深度报告）
+INSIGHT_MODE=normal
 
 # Media Agent
 ...

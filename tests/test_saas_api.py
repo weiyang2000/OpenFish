@@ -65,6 +65,7 @@ def test_system_config_masks_secrets_and_ignores_mask_placeholder(client: TestCl
             "values": {
                 "REPORT_ENGINE_API_KEY": "sk-real-secret",
                 "SEARCH_TOOL_TYPE": "BochaAPI",
+                "INSIGHT_MODE": "deep",
                 "MAX_REFLECTIONS": 2,
             }
         },
@@ -75,6 +76,9 @@ def test_system_config_masks_secrets_and_ignores_mask_placeholder(client: TestCl
     assert fields["REPORT_ENGINE_API_KEY"]["value"] == "********"
     assert fields["REPORT_ENGINE_API_KEY"]["sensitive"] is True
     assert fields["SEARCH_TOOL_TYPE"]["value"] == "BochaAPI"
+    assert fields["INSIGHT_MODE"]["value"] == "deep"
+    assert fields["INSIGHT_MODE"]["type"] == "enum"
+    assert fields["INSIGHT_MODE"]["options"] == ["fast", "normal", "deep"]
     assert fields["MAX_REFLECTIONS"]["value"] == "2"
     assert fields["MAX_REFLECTIONS"]["type"] == "number"
 
@@ -93,6 +97,7 @@ def test_shared_engine_settings_include_reflection_fields():
     settings = reload_settings()
     for key in (
         "MAX_REFLECTIONS",
+        "INSIGHT_MODE",
         "MAX_SEARCH_RESULTS_FOR_LLM",
         "DEFAULT_SEARCH_HOT_CONTENT_LIMIT",
         "DEFAULT_SEARCH_TOPIC_GLOBALLY_LIMIT_PER_TABLE",
@@ -1300,6 +1305,79 @@ def test_report_rerun_reuses_unselected_historical_engine_reports(
     assert orchestration["engines"]["query"]["status"] == "succeeded"
     assert orchestration["engines"]["media"]["status"] == "reused"
     assert orchestration["engines"]["insight"]["status"] == "reused"
+
+
+def test_report_orchestration_passes_insight_mode_to_engine_config(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+
+    def fake_pre_engine(
+        self: TaskService,
+        engine_id: str,
+        topic: str,
+        task_workspace: Path,
+        base_settings: Any,
+        task_id: str,
+    ) -> dict[str, Any]:
+        del self, topic, task_id
+        captured["mode"] = base_settings.INSIGHT_MODE
+        artifact_path = task_workspace / engine_id / f"{engine_id}_report.md"
+        artifact_path.parent.mkdir(parents=True, exist_ok=True)
+        report = "insight mode report"
+        artifact_path.write_text(report, encoding="utf-8")
+        return {
+            "engine": engine_id,
+            "status": "succeeded",
+            "report": report,
+            "artifactPath": str(artifact_path),
+            "startedAt": "2026-05-25T04:30:00Z",
+            "completedAt": "2026-05-25T04:31:00Z",
+        }
+
+    monkeypatch.setattr(TaskService, "_run_pre_report_engine", fake_pre_engine)
+    monkeypatch.setattr(
+        TaskService,
+        "_start_report_forum_monitor",
+        lambda self, workspace_id, task_id, task_workspace: types.SimpleNamespace(
+            forum_log_file=task_workspace / "forum" / "forum.log"
+        ),
+    )
+    monkeypatch.setattr(TaskService, "_stop_report_forum_monitor", lambda *args: "")
+
+    create_response = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "Insight mode config",
+            "sourceScope": {
+                "orchestration": {
+                    "enabled": True,
+                    "engines": ["insight"],
+                    "insightMode": "deep",
+                }
+            },
+            "outputFormats": ["html"],
+        },
+    )
+    assert create_response.status_code == 202
+    task = create_response.json()["task"]
+    task_service: TaskService = client.app.state.task_service
+    task_workspace = task_service._report_task_workspace(task["workspaceId"], task["id"])
+
+    reports, forum_logs = task_service._run_report_orchestration(
+        WORKSPACE_HEADERS["X-Workspace-Id"],
+        task,
+        task_workspace,
+        types.SimpleNamespace(INSIGHT_MODE="normal"),
+    )
+
+    assert captured["mode"] == "deep"
+    assert reports == ["insight mode report"]
+    assert forum_logs == ""
+    completed = task_service.get_report_task(WORKSPACE_HEADERS["X-Workspace-Id"], task["id"])
+    assert completed["sourceScope"]["orchestration"]["insightMode"] == "deep"
 
 
 def test_crawler_task_stop_retry_and_conflict(client: TestClient):

@@ -167,6 +167,7 @@ def test_report_task_accepts_single_and_multiple_orchestration_engines(client: T
     )
     assert single.status_code == 202
     assert single.json()["task"]["sourceScope"]["orchestration"]["engines"] == ["query"]
+    assert single.json()["task"]["sourceScope"]["orchestration"]["insightMode"] == "normal"
 
     multiple = client.post(
         "/api/v1/report-tasks",
@@ -191,6 +192,73 @@ def test_report_task_accepts_single_and_multiple_orchestration_engines(client: T
     )
     assert empty.status_code == 422
     assert empty.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_report_task_accepts_insight_mode_and_rerun_preserves_it(client: TestClient):
+    response = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "Insight 模式报告",
+            "sourceScope": {
+                "orchestration": {
+                    "enabled": True,
+                    "engines": ["query"],
+                    "insightMode": "fast",
+                }
+            },
+            "outputFormats": ["html"],
+        },
+    )
+    assert response.status_code == 202
+    task = response.json()["task"]
+    assert task["sourceScope"]["orchestration"]["insightMode"] == "fast"
+
+    invalid = client.post(
+        "/api/v1/report-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "topic": "非法 Insight 模式报告",
+            "sourceScope": {
+                "orchestration": {
+                    "enabled": True,
+                    "engines": ["insight"],
+                    "insightMode": "turbo",
+                }
+            },
+            "outputFormats": ["html"],
+        },
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    task_service: TaskService = client.app.state.task_service
+    task_service._complete_report_task(
+        WORKSPACE_HEADERS["X-Workspace-Id"],
+        task["id"],
+        task["artifacts"],
+    )
+    rerun = client.post(
+        f"/api/v1/report-tasks/{task['id']}:rerun",
+        headers=WORKSPACE_HEADERS,
+        json={"engines": ["insight"]},
+    )
+    assert rerun.status_code == 202
+    assert rerun.json()["task"]["sourceScope"]["orchestration"]["insightMode"] == "fast"
+
+
+def test_openapi_contract_exposes_insight_mode(contract: dict[str, Any]):
+    assert contract["components"]["schemas"]["InsightMode"]["enum"] == [
+        "fast",
+        "normal",
+        "deep",
+    ]
+    orchestration_properties = contract["components"]["schemas"][
+        "ReportOrchestrationScope"
+    ]["properties"]
+    assert orchestration_properties["insightMode"] == {
+        "$ref": "#/components/schemas/InsightMode"
+    }
 
 
 def test_crawler_strategy_contract_sample_preserves_platform_id(

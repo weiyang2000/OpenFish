@@ -25,6 +25,7 @@ CRAWLER_STATUSES = (
 )
 RUN_MODES = ("topic_extraction", "deep_sentiment", "full_workflow")
 KEYWORD_SOURCES = ("manual", "broad_topic_extraction", "mixed")
+INSIGHT_MODES = ("fast", "normal", "deep")
 CRAWLER_ACCOUNT_STATUSES = (
     "active",
     "login_required",
@@ -67,6 +68,7 @@ class ReportOrchestrationScope(BaseModel):
         default_factory=lambda: ["query", "media", "insight"],
         min_length=1,
     )
+    insightMode: Literal["fast", "normal", "deep"] = "normal"
 
     @field_validator("engines")
     @classmethod
