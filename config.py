@@ -65,6 +65,7 @@ class Settings:
         self.INSIGHT_ENGINE_API_KEY = _env_str("INSIGHT_ENGINE_API_KEY")
         self.INSIGHT_ENGINE_BASE_URL = _env_str("INSIGHT_ENGINE_BASE_URL")
         self.INSIGHT_ENGINE_MODEL_NAME = _env_str("INSIGHT_ENGINE_MODEL_NAME")
+        self.INSIGHT_MODE = _env_str("INSIGHT_MODE", "normal")
         self.MEDIA_ENGINE_API_KEY = _env_str("MEDIA_ENGINE_API_KEY")
         self.MEDIA_ENGINE_BASE_URL = _env_str("MEDIA_ENGINE_BASE_URL")
         self.MEDIA_ENGINE_MODEL_NAME = _env_str("MEDIA_ENGINE_MODEL_NAME")

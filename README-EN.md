@@ -394,6 +394,8 @@ DB_DIALECT=postgresql
 INSIGHT_ENGINE_API_KEY=
 INSIGHT_ENGINE_BASE_URL=
 INSIGHT_ENGINE_MODEL_NAME=
+# Optional: fast (short report), normal (default full report), deep (deeper report)
+INSIGHT_MODE=normal
 
 # Media Agent
 ...

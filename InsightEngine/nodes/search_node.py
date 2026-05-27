@@ -120,7 +120,7 @@ class FirstSearchNode(BaseNode):
                         logger.error("无法修复JSON，使用默认查询")
                         return self._get_default_search_query()
             
-            # 验证和清理结果
+            # 验证和清理结果，保留工具和工具参数供 agent 执行
             search_query = result.get("search_query", "")
             reasoning = result.get("reasoning", "")
             
@@ -128,10 +128,14 @@ class FirstSearchNode(BaseNode):
                 logger.warning("未找到搜索查询，使用默认查询")
                 return self._get_default_search_query()
             
-            return {
+            parsed_result = {
                 "search_query": search_query,
                 "reasoning": reasoning
             }
+            for field in ("search_tool", "start_date", "end_date", "platform", "time_period"):
+                if result.get(field) is not None:
+                    parsed_result[field] = result[field]
+            return parsed_result
             
         except Exception as e:
             self.log_error(f"处理输出失败: {str(e)}")
@@ -255,7 +259,7 @@ class ReflectionNode(BaseNode):
                         logger.error("无法修复JSON，使用默认查询")
                         return self._get_default_reflection_query()
             
-            # 验证和清理结果
+            # 验证和清理结果，保留工具和工具参数供 agent 执行
             search_query = result.get("search_query", "")
             reasoning = result.get("reasoning", "")
             
@@ -263,10 +267,14 @@ class ReflectionNode(BaseNode):
                 logger.warning("未找到搜索查询，使用默认查询")
                 return self._get_default_reflection_query()
             
-            return {
+            parsed_result = {
                 "search_query": search_query,
                 "reasoning": reasoning
             }
+            for field in ("search_tool", "start_date", "end_date", "platform", "time_period"):
+                if result.get(field) is not None:
+                    parsed_result[field] = result[field]
+            return parsed_result
             
         except Exception as e:
             logger.exception(f"处理输出失败: {str(e)}")

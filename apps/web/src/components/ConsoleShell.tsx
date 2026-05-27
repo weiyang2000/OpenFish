@@ -79,6 +79,7 @@ import type {
   PlatformPolicy,
   ReportEngineId,
   ReportFormat,
+  ReportInsightMode,
   ReportTemplate,
   ReportTask,
   TaskLogPage,
@@ -130,6 +131,14 @@ const reportEngineLabels: Record<ReportEngineId, string> = {
 };
 
 const reportEngineOptions = Object.entries(reportEngineLabels) as Array<[ReportEngineId, string]>;
+
+const reportInsightModeLabels: Record<ReportInsightMode, string> = {
+  fast: "Fast",
+  normal: "Normal",
+  deep: "Deep"
+};
+
+const reportInsightModeOptions = Object.entries(reportInsightModeLabels) as Array<[ReportInsightMode, string]>;
 
 const loginTypeLabels: Record<PlatformPolicy["loginType"], string> = {
   qrcode: "扫码",
@@ -293,6 +302,16 @@ function formatReportEngines(task: ReportTask) {
   return selectedReportEngines(task).map((engine) => reportEngineLabels[engine]).join(" / ");
 }
 
+function getReportInsightMode(task: ReportTask): ReportInsightMode {
+  const mode = task.sourceScope?.orchestration?.insightMode;
+  return mode && mode in reportInsightModeLabels ? mode : "normal";
+}
+
+function formatReportInsightMode(task: ReportTask) {
+  if (!selectedReportEngines(task).includes("insight")) return "Insight Off";
+  return `Insight ${reportInsightModeLabels[getReportInsightMode(task)]}`;
+}
+
 function formatPayload(payload: Record<string, unknown>) {
   return JSON.stringify(payload, null, 2);
 }
@@ -454,7 +473,8 @@ export function ConsoleShell() {
       query: true,
       media: true,
       insight: true
-    } satisfies Record<ReportEngineId, boolean>
+    } satisfies Record<ReportEngineId, boolean>,
+    insightMode: "normal" as ReportInsightMode
   });
   const [crawlerForm, setCrawlerForm] = useState<{
     startDate: string;
@@ -824,7 +844,8 @@ export function ConsoleShell() {
         sourceScope: {
           orchestration: {
             enabled: true,
-            engines
+            engines,
+            insightMode: reportForm.insightMode
           }
         },
         outputFormats,
@@ -1173,6 +1194,36 @@ export function ConsoleShell() {
                   </label>
                 ))}
               </div>
+              <div
+                className={classNames("insight-mode-row", !reportForm.engines.insight && "disabled")}
+                aria-disabled={!reportForm.engines.insight}
+              >
+                <span id="insight-mode-label" className="control-group-label">
+                  Insight 模式
+                </span>
+                <div className="segmented-control" role="radiogroup" aria-labelledby="insight-mode-label">
+                  {reportInsightModeOptions.map(([mode, label]) => (
+                    <label
+                      key={mode}
+                      className={classNames(
+                        "segmented-option",
+                        reportForm.insightMode === mode && "active",
+                        !reportForm.engines.insight && "disabled"
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="insight-mode"
+                        value={mode}
+                        checked={reportForm.insightMode === mode}
+                        disabled={!reportForm.engines.insight}
+                        onChange={() => setReportForm({ ...reportForm, insightMode: mode })}
+                      />
+                      <span>{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
               <div className="format-row">
                 {(Object.keys(reportForm.formats) as ReportFormat[]).map((format) => (
                   <label key={format} className="toggle-pill">
@@ -1207,7 +1258,8 @@ export function ConsoleShell() {
                     >
                       <strong>{task.topic}</strong>
                       <span>
-                        {formatReportEngines(task)} · {task.id} · {formatTime(task.updatedAt)}
+                        {formatReportEngines(task)} · {formatReportInsightMode(task)} · {task.id} ·{" "}
+                        {formatTime(task.updatedAt)}
                       </span>
                       <ProgressBar value={task.progress} />
                     </button>

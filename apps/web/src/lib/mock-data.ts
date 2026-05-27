@@ -134,6 +134,13 @@ export const reportTasks: ReportTask[] = [
     progress: 100,
     stage: "completed",
     templateId: "daily-monitoring",
+    sourceScope: {
+      orchestration: {
+        enabled: true,
+        engines: ["query", "media", "insight"],
+        insightMode: "normal"
+      }
+    },
     artifacts: [
       {
         format: "html",
@@ -173,6 +180,13 @@ export const reportTasks: ReportTask[] = [
     progress: 58,
     stage: "agent_running",
     templateId: "industry-policy",
+    sourceScope: {
+      orchestration: {
+        enabled: true,
+        engines: ["media", "insight"],
+        insightMode: "deep"
+      }
+    },
     artifacts: [
       {
         format: "html",

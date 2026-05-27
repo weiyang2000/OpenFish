@@ -267,6 +267,7 @@ paths:
                     includeForumLog: true
                     orchestration:
                       enabled: true
+                      insightMode: normal
                       engines: [query, media]
                   outputFormats: [html, md, pdf]
                   owner:
@@ -1154,6 +1155,12 @@ components:
       type: string
       enum: [query, media, insight]
 
+    InsightMode:
+      type: string
+      enum: [fast, normal, deep]
+      default: normal
+      description: Insight Engine generation preset. Ignored by Query/Media/Report when Insight is not selected.
+
     ComponentStatus:
       type: string
       enum: [unknown, stopped, starting, running, degraded, failed, stopping]
@@ -1546,6 +1553,8 @@ components:
         status:
           type: string
           enum: [queued, running, succeeded, failed]
+        insightMode:
+          $ref: "#/components/schemas/InsightMode"
         workspacePath:
           type: string
           description: Per-report workspace used for Query, Media, Insight, Forum, and Report artifacts.

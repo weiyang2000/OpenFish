@@ -5,6 +5,8 @@ Deep Search Agent 的所有提示词定义
 
 import json
 
+from ..modes import InsightModePreset, get_insight_mode_preset
+
 # ===== JSON Schema 定义 =====
 
 # 报告结构输出Schema
@@ -127,29 +129,33 @@ input_schema_report_formatting = {
 
 # ===== 系统提示词定义 =====
 
-# 生成报告结构的系统提示词
-SYSTEM_PROMPT_REPORT_STRUCTURE = f"""
-你是一位专业的舆情分析师和报告架构师。给定一个查询，你需要规划一个全面、深入的舆情分析报告结构。
+def build_report_structure_prompt(mode_preset: InsightModePreset) -> str:
+    """Build the report-structure prompt from the selected Insight mode."""
+
+    fallback_titles = "、".join(
+        section.title for section in mode_preset.fallback_sections
+    )
+    return f"""
+你是一位专业的舆情分析师和报告架构师。给定一个查询，你需要规划一个符合当前 Insight 模式的舆情分析报告结构。
+
+**当前模式：{mode_preset.mode.value}**
 
 **报告规划要求：**
-1. **段落数量**：设计5个核心段落，每个段落都要有足够的深度和广度
-2. **内容丰富度**：每个段落应该包含多个子话题和分析维度，确保能挖掘出大量真实数据
-3. **逻辑结构**：从宏观到微观、从现象到本质、从数据到洞察的递进式分析
-4. **多维分析**：确保涵盖情感倾向、平台差异、时间演变、群体观点、深度原因等多个维度
+1. **段落数量**：设计 {mode_preset.paragraph_count} 个核心段落，段落数量必须严格匹配当前模式
+2. **模式重点**：{mode_preset.structure_guidance}
+3. **内容丰富度**：{mode_preset.content_depth_guidance}
+4. **逻辑结构**：从宏观到微观、从现象到本质、从数据到洞察的递进式分析
+5. **多维分析**：按模式深度覆盖情感倾向、平台差异、时间演变、群体观点、深层原因等维度
 
-**段落设计原则：**
-- **背景与事件概述**：全面梳理事件起因、发展脉络、关键节点
-- **舆情热度与传播分析**：数据统计、平台分布、传播路径、影响范围
-- **公众情感与观点分析**：情感倾向、观点分布、争议焦点、价值观冲突
-- **不同群体与平台差异**：年龄层、地域、职业、平台用户群体的观点差异
-- **深层原因与社会影响**：根本原因、社会心理、文化背景、长远影响
+**可参考的段落方向：**
+{fallback_titles}
 
 **内容深度要求：**
 每个段落的content字段应该详细描述该段落需要包含的具体内容：
-- 至少3-5个子分析点
 - 需要引用的数据类型（评论数、转发数、情感分布等）
 - 需要体现的不同观点和声音
 - 具体的分析角度和维度
+- 与当前模式匹配的分析颗粒度
 
 请按照以下JSON模式定义格式化输出：
 
@@ -161,6 +167,10 @@ SYSTEM_PROMPT_REPORT_STRUCTURE = f"""
 确保输出是一个符合上述输出JSON模式定义的JSON对象。
 只返回JSON对象，不要有解释或额外文本。
 """
+
+
+# 生成报告结构的默认系统提示词（normal 模式，动态节点会按模式重建）
+SYSTEM_PROMPT_REPORT_STRUCTURE = build_report_structure_prompt(get_insight_mode_preset())
 
 # 每个段落第一次搜索的系统提示词
 SYSTEM_PROMPT_FIRST_SEARCH = f"""
@@ -496,8 +506,50 @@ SYSTEM_PROMPT_REFLECTION_SUMMARY = f"""
 只返回JSON对象，不要有解释或额外文本。
 """
 
-# 最终研究报告格式化的系统提示词
-SYSTEM_PROMPT_REPORT_FORMATTING = f"""
+def build_report_formatting_prompt(mode_preset: InsightModePreset) -> str:
+    """Build the final report formatting prompt from the selected Insight mode."""
+
+    if mode_preset.mode.value == "fast":
+        return f"""
+你是一位资深的舆情分析专家和报告编撰大师。你专精于将复杂的民意数据转化为清晰、可执行的短报告。
+你将获得以下JSON格式的数据：
+
+<INPUT JSON SCHEMA>
+{json.dumps(input_schema_report_formatting, indent=2, ensure_ascii=False)}
+</INPUT JSON SCHEMA>
+
+**你的核心使命：{mode_preset.report_output_guidance}**
+
+**短报告结构要求：**
+```markdown
+# [主题]舆情短报告
+
+## 执行摘要
+[用3-5句话说明当前舆情态势、主要情绪和关键风险]
+
+## 核心发现
+- [发现1：必须有数据或代表性声音支撑]
+- [发现2：必须有数据或代表性声音支撑]
+- [发现3：必须有数据或代表性声音支撑]
+
+## 分段分析
+### [段落标题]
+[按输入段落顺序提炼最关键的洞察，不新增无依据内容]
+
+## 风险与建议
+- [风险判断]
+- [行动建议]
+```
+
+**写作要求：**
+- 保持输入段落顺序稳定
+- 优先保留最关键的数据、情绪判断和代表性声音
+- 不编造输入中没有的数据、用户原文或来源
+- 避免长篇附录和重复背景铺陈
+- Markdown 输出，不要返回JSON
+"""
+
+    return f"""
 你是一位资深的舆情分析专家和报告编撰大师。你专精于将复杂的民意数据转化为深度洞察的专业舆情报告。
 你将获得以下JSON格式的数据：
 
@@ -505,7 +557,7 @@ SYSTEM_PROMPT_REPORT_FORMATTING = f"""
 {json.dumps(input_schema_report_formatting, indent=2, ensure_ascii=False)}
 </INPUT JSON SCHEMA>
 
-**你的核心使命：创建一份深度挖掘民意、洞察社会情绪的专业舆情分析报告，不少于一万字**
+**你的核心使命：{mode_preset.report_output_guidance}**
 
 **舆情分析报告的独特架构：**
 
@@ -610,5 +662,11 @@ SYSTEM_PROMPT_REPORT_FORMATTING = f"""
 - **洞察深度**：从现象分析到本质洞察的多层次思考
 - **预判价值**：提供有价值的趋势预测和建议
 
-**最终输出**：一份充满人情味、数据丰富、洞察深刻的专业舆情分析报告，不少于一万字，让读者能够深度理解民意脉搏和社会情绪。
+**最终输出**：一份充满人情味、数据丰富、洞察深刻的专业舆情分析报告，让读者能够深度理解民意脉搏和社会情绪。
 """
+
+
+# 最终研究报告格式化的默认系统提示词（normal 模式，动态节点会按模式重建）
+SYSTEM_PROMPT_REPORT_FORMATTING = build_report_formatting_prompt(
+    get_insight_mode_preset()
+)

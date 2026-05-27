@@ -4,14 +4,16 @@
 """
 
 import json
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 from loguru import logger
 
 from .base_node import BaseNode
-from ..prompts import SYSTEM_PROMPT_REPORT_FORMATTING
+from ..modes import InsightModePreset, get_insight_mode_preset
+from ..prompts import build_report_formatting_prompt
 from ..utils.text_processing import (
+    clean_markdown_tags,
     remove_reasoning_from_output,
-    clean_markdown_tags
 )
 
 
@@ -20,7 +22,11 @@ from ..utils.text_processing import (
 class ReportFormattingNode(BaseNode):
     """格式化最终报告的节点"""
     
-    def __init__(self, llm_client):
+    def __init__(
+        self,
+        llm_client,
+        mode_preset: InsightModePreset | None = None,
+    ):
         """
         初始化报告格式化节点
         
@@ -28,6 +34,8 @@ class ReportFormattingNode(BaseNode):
             llm_client: LLM客户端
         """
         super().__init__(llm_client, "ReportFormattingNode")
+        self.mode_preset = mode_preset or get_insight_mode_preset()
+        self.system_prompt = build_report_formatting_prompt(self.mode_preset)
     
     def validate_input(self, input_data: Any) -> bool:
         """验证输入数据"""
@@ -38,7 +46,7 @@ class ReportFormattingNode(BaseNode):
                     isinstance(item, dict) and "title" in item and "paragraph_latest_state" in item
                     for item in data
                 )
-            except:
+            except json.JSONDecodeError:
                 return False
         elif isinstance(input_data, list):
             return all(
@@ -72,7 +80,7 @@ class ReportFormattingNode(BaseNode):
             
             # 调用LLM（流式，安全拼接UTF-8）
             response = self.llm_client.stream_invoke_to_string(
-                SYSTEM_PROMPT_REPORT_FORMATTING,
+                self.system_prompt,
                 message,
             )
             

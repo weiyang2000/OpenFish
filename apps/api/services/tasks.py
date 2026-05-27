@@ -20,6 +20,7 @@ from apps.api.schemas import (
     CreateReportTaskRequest,
     CrawlerStrategyInput,
     REPORT_FORMATS,
+    REPORT_INSIGHT_MODES,
     UserRef,
 )
 from apps.api.services.common import new_id, slugify_filename, utc_now
@@ -167,9 +168,11 @@ class TaskService:
             raise ApiError("VALIDATION_ERROR", "At least one report engine is required", status_code=400)
 
         source_scope = task.get("sourceScope", {})
+        insight_mode = self._report_insight_mode(source_scope)
         source_scope["orchestration"] = {
             "enabled": True,
             "engines": engine_ids,
+            "insightMode": insight_mode,
             "rerun": True,
         }
         output_formats = [item["format"] for item in task.get("artifacts", [])] or ["html"]
@@ -753,12 +756,18 @@ class TaskService:
     ) -> tuple[list[str], str]:
         task_id = task["id"]
         task_workspace.mkdir(parents=True, exist_ok=True)
-        engine_ids = self._report_orchestration_engines(task.get("sourceScope", {}))
+        source_scope = task.get("sourceScope", {})
+        engine_ids = self._report_orchestration_engines(source_scope)
+        insight_mode = self._report_insight_mode(source_scope)
+        base_settings = copy.copy(base_settings)
+        if "insight" in engine_ids:
+            base_settings.INSIGHT_MODE = insight_mode
         historical_results = self._load_task_historical_engine_reports(task_workspace, set(engine_ids))
         started_at = utc_now()
         orchestration_meta: dict[str, Any] = {
             "enabled": True,
             "mode": "single_engine" if len(engine_ids) == 1 else "multi_engine",
+            "insightMode": insight_mode,
             "status": "running",
             "workspacePath": str(task_workspace),
             "rerunEngines": list(engine_ids),
@@ -1082,6 +1091,12 @@ class TaskService:
         orchestration = source_scope.get("orchestration") or {}
         requested = orchestration.get("engines") or list(REPORT_ORCHESTRATION_ENGINES)
         return tuple(engine for engine in REPORT_ORCHESTRATION_ENGINES if engine in requested)
+
+    @staticmethod
+    def _report_insight_mode(source_scope: dict[str, Any]) -> str:
+        orchestration = source_scope.get("orchestration") or {}
+        mode = orchestration.get("insightMode") or "normal"
+        return mode if mode in REPORT_INSIGHT_MODES else "normal"
 
     def _update_report_orchestration(
         self,
