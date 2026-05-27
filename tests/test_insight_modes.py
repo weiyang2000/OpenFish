@@ -70,9 +70,48 @@ if importlib.util.find_spec("sqlalchemy") is None:
 
 
 from InsightEngine.agent import DeepSearchAgent
-from InsightEngine.modes import get_insight_mode_preset
+from InsightEngine.modes import (
+    InsightMode,
+    get_insight_mode_preset,
+    normalize_insight_mode,
+)
+from InsightEngine.nodes.formatting_node import ReportFormattingNode
 from InsightEngine.nodes.report_structure_node import ReportStructureNode
+from InsightEngine.prompts import build_report_structure_prompt
 from InsightEngine.state import State
+
+
+def test_insight_mode_preset_contracts_and_prompts():
+    assert normalize_insight_mode(None) == InsightMode.NORMAL
+    assert normalize_insight_mode("FAST") == InsightMode.FAST
+    with pytest.raises(ValueError, match="unsupported insight mode"):
+        normalize_insight_mode("turbo")
+
+    fast = get_insight_mode_preset("fast")
+    normal = get_insight_mode_preset("normal")
+    deep = get_insight_mode_preset("deep")
+
+    assert fast.paragraph_count == 3
+    assert fast.reflection_rounds == 1
+    assert fast.max_search_results_for_llm == 20
+    assert "短报告" in fast.report_output_guidance
+    assert normal.paragraph_count == 5
+    assert deep.paragraph_count > normal.paragraph_count
+    assert deep.reflection_rounds > normal.reflection_rounds
+    assert deep.max_search_results_for_llm > normal.max_search_results_for_llm
+
+    fast_structure_prompt = build_report_structure_prompt(fast)
+    deep_structure_prompt = build_report_structure_prompt(deep)
+    assert "当前模式：fast" in fast_structure_prompt
+    assert "设计 3 个核心段落" in fast_structure_prompt
+    assert "当前模式：deep" in deep_structure_prompt
+    assert "设计 7 个核心段落" in deep_structure_prompt
+
+    fast_formatting = ReportFormattingNode(None, fast)
+    normal_formatting = ReportFormattingNode(None, normal)
+    assert "舆情短报告" in fast_formatting.system_prompt
+    assert "数据附录" not in fast_formatting.system_prompt
+    assert "数据附录" in normal_formatting.system_prompt
 
 
 def test_fast_mode_structure_is_trimmed_and_backfilled():
@@ -123,6 +162,45 @@ def test_fast_mode_caps_results_entering_llm_prompt():
     prompt_results = agent._search_results_from_response(response)
     assert len(prompt_results) == 20
     assert prompt_results[-1]["title"] == "result-19"
+
+
+def test_fast_mode_uses_one_reflection_round():
+    agent = object.__new__(DeepSearchAgent)
+    agent.mode_preset = get_insight_mode_preset("fast")
+    agent.config = SimpleNamespace(
+        DEFAULT_SEARCH_TOPIC_GLOBALLY_LIMIT_PER_TABLE=50,
+        MAX_CONTENT_LENGTH=12000,
+    )
+    state = State(query="测试主题", report_title="测试报告")
+    state.add_paragraph("段落", "内容")
+    reflection_calls = []
+    summary_calls = []
+
+    class FakeReflectionNode:
+        def run(self, input_data):
+            reflection_calls.append(input_data)
+            return {
+                "search_query": "测试查询",
+                "search_tool": "search_topic_globally",
+                "reasoning": "测试推理",
+            }
+
+    class FakeReflectionSummaryNode:
+        def mutate_state(self, input_data, next_state, paragraph_index):
+            summary_calls.append(input_data)
+            next_state.paragraphs[paragraph_index].research.latest_summary = "updated"
+            return next_state
+
+    agent.reflection_node = FakeReflectionNode()
+    agent.reflection_summary_node = FakeReflectionSummaryNode()
+    agent.execute_search_tool = lambda *_args, **_kwargs: _DummyDBResponse()
+
+    updated_state = agent._reflection_loop(0, state)
+
+    assert updated_state is state
+    assert len(reflection_calls) == 1
+    assert len(summary_calls) == 1
+    assert state.paragraphs[0].research.latest_summary == "updated"
 
 
 def test_normal_mode_keeps_legacy_configurable_defaults():

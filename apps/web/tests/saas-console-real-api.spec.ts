@@ -411,6 +411,30 @@ test("creates report tasks with selected orchestration engines", async ({ page }
     "Media Engine / Insight Engine"
   );
   await expect(page.locator(".task-row", { hasText: "多引擎调度验证" })).toContainText("Insight Fast");
+
+  reportPayload = undefined;
+  await page.getByPlaceholder("输入报告主题").fill("非 Insight 调度验证");
+  await page.getByLabel("Query Engine").check();
+  await page.getByLabel("Insight Engine").uncheck();
+  await expect(page.getByRole("radio", { name: "Fast" })).toBeDisabled();
+  await page.getByRole("button", { name: "创建报告" }).click();
+
+  expect(reportPayload).toMatchObject({
+    topic: "非 Insight 调度验证",
+    sourceScope: {
+      orchestration: {
+        enabled: true,
+        insightMode: "fast",
+        engines: ["query", "media"]
+      }
+    }
+  });
+  await expect(page.locator(".task-row", { hasText: "非 Insight 调度验证" })).toContainText(
+    "Query Engine / Media Engine"
+  );
+  await expect(page.locator(".task-row", { hasText: "非 Insight 调度验证" })).toContainText(
+    "Insight Off"
+  );
 });
 
 test("polls active report tasks until backend completion", async ({ page }) => {

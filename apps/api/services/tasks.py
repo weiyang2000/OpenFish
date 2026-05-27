@@ -760,7 +760,8 @@ class TaskService:
         engine_ids = self._report_orchestration_engines(source_scope)
         insight_mode = self._report_insight_mode(source_scope)
         base_settings = copy.copy(base_settings)
-        base_settings.INSIGHT_MODE = insight_mode
+        if "insight" in engine_ids:
+            base_settings.INSIGHT_MODE = insight_mode
         historical_results = self._load_task_historical_engine_reports(task_workspace, set(engine_ids))
         started_at = utc_now()
         orchestration_meta: dict[str, Any] = {
