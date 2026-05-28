@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from loguru import logger
 
 if importlib.util.find_spec("sentence_transformers") is None:
     sentence_transformers_module = ModuleType("sentence_transformers")
@@ -254,6 +255,7 @@ class _ParallelStubAgent(DeepSearchAgent):
         time.sleep((3 - paragraph.order) * 0.01)
         if paragraph.order == self.fail_order:
             raise RuntimeError("simulated paragraph failure")
+        logger.info(f"worker-summary-{paragraph.order}")
         paragraph.research.latest_summary = f"summary-{paragraph.order}"
         return state
 
@@ -276,6 +278,28 @@ def test_parallel_paragraph_processing_preserves_original_order():
         for paragraph in agent.state.paragraphs
     ] == ["summary-0", "summary-1", "summary-2"]
     assert all(paragraph.research.is_completed for paragraph in agent.state.paragraphs)
+
+
+def test_parallel_paragraph_worker_logs_keep_report_context(tmp_path):
+    agent = _ParallelStubAgent()
+    log_path = tmp_path / "insight.log"
+    handler_id = logger.add(
+        str(log_path),
+        level="INFO",
+        format="{message}",
+        filter=lambda record: record["extra"].get("report_task_id") == "task-1",
+    )
+
+    try:
+        with logger.contextualize(report_task_id="task-1"):
+            agent._process_paragraphs()
+    finally:
+        logger.remove(handler_id)
+
+    log_content = log_path.read_text(encoding="utf-8")
+    assert "worker-summary-0" in log_content
+    assert "worker-summary-1" in log_content
+    assert "worker-summary-2" in log_content
 
 
 def test_parallel_paragraph_failure_keeps_original_state_incomplete():

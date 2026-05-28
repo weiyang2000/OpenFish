@@ -9,6 +9,7 @@ import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import copy_context
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -510,10 +511,15 @@ class DeepSearchAgent:
         processed_paragraphs: list[Paragraph | None] = [None] * total_paragraphs
 
         with ThreadPoolExecutor(max_workers=total_paragraphs) as executor:
-            futures = {
-                executor.submit(self._process_single_paragraph, paragraph): index
-                for index, paragraph in enumerate(paragraph_copies)
-            }
+            futures = {}
+            for index, paragraph in enumerate(paragraph_copies):
+                context = copy_context()
+                future = executor.submit(
+                    context.run,
+                    self._process_single_paragraph,
+                    paragraph,
+                )
+                futures[future] = index
             completed_count = 0
             for future in as_completed(futures):
                 paragraph_index = futures[future]
