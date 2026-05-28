@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.api.schemas import MASK, UserRef
+from apps.api.schemas import MASK, REPORT_INSIGHT_MODES, UserRef
 from apps.api.services.common import utc_now
 from apps.api.storage import Store, dumps, loads
 
@@ -23,6 +23,7 @@ CONFIG_KEYS = [
     "INSIGHT_ENGINE_API_KEY",
     "INSIGHT_ENGINE_BASE_URL",
     "INSIGHT_ENGINE_MODEL_NAME",
+    "INSIGHT_MODE",
     "MEDIA_ENGINE_API_KEY",
     "MEDIA_ENGINE_BASE_URL",
     "MEDIA_ENGINE_MODEL_NAME",
@@ -72,7 +73,10 @@ def config_group(key: str) -> str:
         return "server"
     if key == "DATABASE_URL" or key.startswith("DB_"):
         return "database"
-    if key.startswith(("MAX_", "DEFAULT_")) or key in {"SEARCH_TIMEOUT", "SAVE_INTERMEDIATE_STATES"}:
+    if key.startswith(("MAX_", "DEFAULT_")) or key in {
+        "SEARCH_TIMEOUT",
+        "SAVE_INTERMEDIATE_STATES",
+    }:
         return "engine"
     if "SEARCH" in key or key.startswith(("TAVILY", "BOCHA", "ANSPIRE")):
         return "search"
@@ -84,7 +88,7 @@ def config_group(key: str) -> str:
 def config_type(key: str, value: Any) -> str:
     if is_sensitive_key(key):
         return "secret"
-    if key == "SEARCH_TOOL_TYPE":
+    if key in {"INSIGHT_MODE", "SEARCH_TOOL_TYPE"}:
         return "enum"
     if key.endswith("_URL") or key.endswith("BASE_URL"):
         return "url"
@@ -132,6 +136,8 @@ class ConfigurationService:
             }
             if key == "SEARCH_TOOL_TYPE":
                 field["options"] = SEARCH_TOOL_OPTIONS
+            if key == "INSIGHT_MODE":
+                field["options"] = list(REPORT_INSIGHT_MODES)
             if updated_at:
                 field["lastUpdatedAt"] = updated_at
             fields.append(field)

@@ -3,26 +3,33 @@
 负责根据查询生成报告的整体结构
 """
 
-import json
-from typing import Dict, Any, List
 from json.decoder import JSONDecodeError
+import json
+from typing import Any, Dict, List
+
 from loguru import logger
 
 from .base_node import StateMutationNode
+from ..modes import InsightModePreset, get_insight_mode_preset
 from ..state.state import State
-from ..prompts import SYSTEM_PROMPT_REPORT_STRUCTURE
+from ..prompts import build_report_structure_prompt
 from ..utils.text_processing import (
-    remove_reasoning_from_output,
     clean_json_tags,
     extract_clean_response,
-    fix_incomplete_json
+    fix_incomplete_json,
+    remove_reasoning_from_output,
 )
 
 
 class ReportStructureNode(StateMutationNode):
     """生成报告结构的节点"""
     
-    def __init__(self, llm_client, query: str):
+    def __init__(
+        self,
+        llm_client,
+        query: str,
+        mode_preset: InsightModePreset | None = None,
+    ):
         """
         初始化报告结构节点
         
@@ -32,6 +39,8 @@ class ReportStructureNode(StateMutationNode):
         """
         super().__init__(llm_client, "ReportStructureNode")
         self.query = query
+        self.mode_preset = mode_preset or get_insight_mode_preset()
+        self.system_prompt = build_report_structure_prompt(self.mode_preset)
     
     def validate_input(self, input_data: Any) -> bool:
         """验证输入数据"""
@@ -52,7 +61,10 @@ class ReportStructureNode(StateMutationNode):
             logger.info(f"正在为查询生成报告结构: {self.query}")
             
             # 调用LLM（流式，安全拼接UTF-8）
-            response = self.llm_client.stream_invoke_to_string(SYSTEM_PROMPT_REPORT_STRUCTURE, self.query)
+            response = self.llm_client.stream_invoke_to_string(
+                self.system_prompt,
+                self.query,
+            )
             
             # 处理响应
             processed_response = self.process_output(response)
@@ -139,8 +151,9 @@ class ReportStructureNode(StateMutationNode):
                 logger.warning("没有有效的段落结构，使用默认结构")
                 return self._generate_default_structure()
             
-            logger.info(f"成功验证 {len(validated_structure)} 个段落结构")
-            return validated_structure
+            normalized_structure = self._fit_structure_to_mode(validated_structure)
+            logger.info(f"成功验证 {len(normalized_structure)} 个段落结构")
+            return normalized_structure
             
         except Exception as e:
             logger.exception(f"处理输出失败: {str(e)}")
@@ -154,16 +167,42 @@ class ReportStructureNode(StateMutationNode):
             默认的报告结构列表
         """
         logger.info("生成默认报告结构")
-        return [
-            {
-                "title": "研究概述",
-                "content": "对查询主题进行总体概述和分析"
-            },
-            {
-                "title": "深度分析",
-                "content": "深入分析查询主题的各个方面"
-            }
+        defaults = [
+            {"title": section.title, "content": section.content}
+            for section in self.mode_preset.fallback_sections
         ]
+        target_count = self.mode_preset.paragraph_count
+        while len(defaults) < target_count:
+            next_index = len(defaults) + 1
+            defaults.append(
+                {
+                    "title": f"补充分析 {next_index}",
+                    "content": f"围绕查询主题进行第 {next_index} 个维度的补充分析。",
+                }
+            )
+        return defaults[:target_count]
+
+    def _fit_structure_to_mode(
+        self,
+        report_structure: List[Dict[str, str]],
+    ) -> List[Dict[str, str]]:
+        """Trim or backfill paragraphs so mode paragraph count is stable."""
+
+        target_count = self.mode_preset.paragraph_count
+        if len(report_structure) > target_count:
+            logger.warning(
+                f"LLM生成了 {len(report_structure)} 个段落，"
+                f"当前模式仅保留前 {target_count} 个"
+            )
+        normalized = report_structure[:target_count]
+        if len(normalized) < target_count:
+            logger.warning(
+                f"LLM生成了 {len(normalized)} 个有效段落，"
+                f"当前模式需要 {target_count} 个，将使用默认段落补齐"
+            )
+            defaults = self._generate_default_structure()
+            normalized.extend(defaults[len(normalized):target_count])
+        return normalized
     
     def mutate_state(self, input_data: Any = None, state: State = None, **kwargs) -> State:
         """

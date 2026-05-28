@@ -40,20 +40,26 @@ test("validates and creates a report task", async ({ page }) => {
   await expect(page.getByLabel("Query Engine")).toBeChecked();
   await expect(page.getByLabel("Media Engine")).toBeChecked();
   await expect(page.getByLabel("Insight Engine")).toBeChecked();
+  await expect(page.getByRole("radio", { name: "Normal" })).toBeChecked();
+  await page.getByRole("radio", { name: "Deep" }).check();
 
   await page.getByPlaceholder("输入报告主题").fill("BET-5 前端报告任务");
   await page.getByLabel("Query Engine").uncheck();
   await page.getByLabel("Media Engine").uncheck();
   await page.getByLabel("Insight Engine").uncheck();
+  await expect(page.getByRole("radio", { name: "Deep" })).toBeDisabled();
   await page.getByRole("button", { name: "创建报告" }).click();
   await expect(page.getByText("至少选择一个分析引擎")).toBeVisible();
 
   await page.getByLabel("Insight Engine").check();
+  await expect(page.getByRole("radio", { name: "Deep" })).toBeEnabled();
+  await expect(page.getByRole("radio", { name: "Deep" })).toBeChecked();
   await page.getByRole("button", { name: "创建报告" }).click();
 
   await expect(page.getByText("报告任务已创建")).toBeVisible();
   await expect(page.getByText("BET-5 前端报告任务")).toBeVisible();
   await expect(page.locator(".task-row", { hasText: "BET-5 前端报告任务" })).toContainText("Insight Engine");
+  await expect(page.locator(".task-row", { hasText: "BET-5 前端报告任务" })).toContainText("Insight Deep");
 });
 
 test("validates crawler platform selection and creates a crawler task", async ({ page }) => {

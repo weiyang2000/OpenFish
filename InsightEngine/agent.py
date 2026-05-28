@@ -3,9 +3,12 @@ Deep Search Agent主类
 整合所有模块，实现完整的深度搜索流程
 """
 
+import copy
 import json
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -15,6 +18,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.cluster import KMeans
 
 from .llms import LLMClient
+from .modes import get_insight_mode_preset
 from .nodes import (
     FirstSearchNode,
     FirstSummaryNode,
@@ -24,6 +28,7 @@ from .nodes import (
     ReportStructureNode,
 )
 from .state import State
+from .state.state import Paragraph
 from .tools import (
     DBResponse,
     MediaCrawlerDB,
@@ -40,7 +45,7 @@ RESULTS_PER_CLUSTER: int = 5  # 每个聚类返回的结果数
 class DeepSearchAgent:
     """Deep Search Agent主类"""
 
-    def __init__(self, config: Optional[Settings] = None):
+    def __init__(self, config: Optional[Settings] = None, mode: str | None = None):
         """
         初始化Deep Search Agent
 
@@ -48,6 +53,9 @@ class DeepSearchAgent:
             config: 可选配置对象（不填则用全局settings）
         """
         self.config = config or settings
+        configured_mode = mode or getattr(self.config, "INSIGHT_MODE", "normal")
+        self.mode_preset = get_insight_mode_preset(configured_mode, self.config)
+        self.active_mode = self.mode_preset.mode.value
 
         # 初始化LLM客户端
         self.llm_client = self._initialize_llm()
@@ -57,6 +65,7 @@ class DeepSearchAgent:
 
         # 初始化聚类小模型（懒加载）
         self._clustering_model = None
+        self._clustering_model_lock = threading.Lock()
 
         # 初始化节点
         self._initialize_nodes()
@@ -68,6 +77,12 @@ class DeepSearchAgent:
         os.makedirs(self.config.OUTPUT_DIR, exist_ok=True)
 
         logger.info(f"Insight Agent已初始化")
+        logger.info(
+            "Insight模式: "
+            f"{self.mode_preset.mode.value} "
+            f"({self.mode_preset.paragraph_count}段, "
+            f"{self.mode_preset.reflection_rounds}轮反思)"
+        )
         logger.info(f"使用LLM: {self.llm_client.get_model_info()}")
         logger.info(f"搜索工具集: MediaCrawlerDB (支持5种本地数据库查询工具)")
         logger.info("情绪分析: 使用爬虫表内 sentiment_label/sentiment_score 字段")
@@ -86,15 +101,23 @@ class DeepSearchAgent:
         self.reflection_node = ReflectionNode(self.llm_client)
         self.first_summary_node = FirstSummaryNode(self.llm_client)
         self.reflection_summary_node = ReflectionSummaryNode(self.llm_client)
-        self.report_formatting_node = ReportFormattingNode(self.llm_client)
+        self.report_formatting_node = ReportFormattingNode(
+            self.llm_client,
+            self.mode_preset,
+        )
 
     def _get_clustering_model(self):
         """懒加载聚类模型"""
         if self._clustering_model is None:
-            logger.info("  加载聚类模型 (paraphrase-multilingual-MiniLM-L12-v2)...")
-            self._clustering_model = SentenceTransformer(
-                "paraphrase-multilingual-MiniLM-L12-v2"
-            )
+            with self._clustering_model_lock:
+                if self._clustering_model is None:
+                    logger.info(
+                        "  加载聚类模型 "
+                        "(paraphrase-multilingual-MiniLM-L12-v2)..."
+                    )
+                    self._clustering_model = SentenceTransformer(
+                        "paraphrase-multilingual-MiniLM-L12-v2"
+                    )
         return self._clustering_model
 
     def _validate_date_format(self, date_str: str) -> bool:
@@ -316,8 +339,8 @@ class DeepSearchAgent:
         if ENABLE_CLUSTERING:
             unique_results = self._cluster_and_sample_results(
                 unique_results,
-                max_results=MAX_CLUSTERED_RESULTS,
-                results_per_cluster=RESULTS_PER_CLUSTER,
+                max_results=self.mode_preset.max_clustered_results,
+                results_per_cluster=self.mode_preset.results_per_cluster,
             )
 
         # 构建整合后的响应
@@ -457,7 +480,11 @@ class DeepSearchAgent:
         logger.info(f"\n[步骤 1] 生成报告结构...")
 
         # 创建报告结构节点
-        report_structure_node = ReportStructureNode(self.llm_client, query)
+        report_structure_node = ReportStructureNode(
+            self.llm_client,
+            query,
+            self.mode_preset,
+        )
 
         # 生成结构并更新状态
         self.state = report_structure_node.mutate_state(state=self.state)
@@ -470,28 +497,111 @@ class DeepSearchAgent:
     def _process_paragraphs(self):
         """处理所有段落"""
         total_paragraphs = len(self.state.paragraphs)
+        if not total_paragraphs:
+            return
 
-        for i in range(total_paragraphs):
-            logger.info(
-                f"\n[步骤 2.{i + 1}] 处理段落: {self.state.paragraphs[i].title}"
-            )
-            logger.info("-" * 50)
+        logger.info(
+            f"\n[步骤 2] 并行处理 {total_paragraphs} 个段落，"
+            "每个段落内部保持串行搜索/总结/反思"
+        )
+        paragraph_copies = [
+            copy.deepcopy(paragraph) for paragraph in self.state.paragraphs
+        ]
+        processed_paragraphs: list[Paragraph | None] = [None] * total_paragraphs
 
-            # 初始搜索和总结
-            self._initial_search_and_summary(i)
+        with ThreadPoolExecutor(max_workers=total_paragraphs) as executor:
+            futures = {
+                executor.submit(self._process_single_paragraph, paragraph): index
+                for index, paragraph in enumerate(paragraph_copies)
+            }
+            completed_count = 0
+            for future in as_completed(futures):
+                paragraph_index = futures[future]
+                try:
+                    processed_paragraphs[paragraph_index] = future.result()
+                except Exception as exc:
+                    for pending in futures:
+                        pending.cancel()
+                    logger.exception(
+                        f"段落处理失败，终止整体任务: "
+                        f"{self.state.paragraphs[paragraph_index].title}"
+                    )
+                    raise RuntimeError(
+                        f"段落处理失败: {self.state.paragraphs[paragraph_index].title}"
+                    ) from exc
 
-            # 反思循环
-            self._reflection_loop(i)
+                completed_count += 1
+                progress = completed_count / total_paragraphs * 100
+                logger.info(f"段落处理完成 ({progress:.1f}%)")
 
-            # 标记段落完成
-            self.state.paragraphs[i].research.mark_completed()
+        self.state.paragraphs = [
+            paragraph for paragraph in processed_paragraphs if paragraph is not None
+        ]
+        if len(self.state.paragraphs) != total_paragraphs:
+            raise RuntimeError("段落并行处理未返回完整结果")
+        self.state.update_timestamp()
 
-            progress = (i + 1) / total_paragraphs * 100
-            logger.info(f"段落处理完成 ({progress:.1f}%)")
+    def _process_single_paragraph(self, paragraph: Paragraph) -> Paragraph:
+        """Process one paragraph with local state only."""
 
-    def _initial_search_and_summary(self, paragraph_index: int):
+        logger.info(f"\n[步骤 2.{paragraph.order + 1}] 处理段落: {paragraph.title}")
+        logger.info("-" * 50)
+        local_state = State(
+            query=self.state.query,
+            report_title=self.state.report_title,
+            paragraphs=[paragraph],
+            created_at=self.state.created_at,
+            updated_at=self.state.updated_at,
+        )
+
+        local_state = self._initial_search_and_summary(0, local_state)
+        local_state = self._reflection_loop(0, local_state)
+        local_state.paragraphs[0].research.mark_completed()
+        return local_state.paragraphs[0]
+
+    def _search_results_from_response(
+        self,
+        search_response: DBResponse | None,
+    ) -> list[dict[str, Any]]:
+        """Convert DB results to prompt payload and apply the active mode cap."""
+
+        if not search_response or not search_response.results:
+            return []
+
+        result_limit = self.mode_preset.max_search_results_for_llm
+        if result_limit > 0:
+            selected_results = search_response.results[:result_limit]
+        else:
+            selected_results = search_response.results
+
+        return [
+            {
+                "title": result.title_or_content,
+                "url": result.url or "",
+                "content": result.title_or_content,
+                "score": result.hotness_score,
+                "raw_content": result.title_or_content,
+                "published_date": result.publish_time.isoformat()
+                if result.publish_time
+                else None,
+                "platform": result.platform,
+                "content_type": result.content_type,
+                "author": result.author_nickname,
+                "engagement": result.engagement,
+                "sentiment_label": result.sentiment_label,
+                "sentiment_score": result.sentiment_score,
+            }
+            for result in selected_results
+        ]
+
+    def _initial_search_and_summary(
+        self,
+        paragraph_index: int,
+        state: State | None = None,
+    ) -> State:
         """执行初始搜索和总结"""
-        paragraph = self.state.paragraphs[paragraph_index]
+        state = state or self.state
+        paragraph = state.paragraphs[paragraph_index]
 
         # 准备搜索输入
         search_input = {"title": paragraph.title, "content": paragraph.content}
@@ -577,35 +687,7 @@ class DeepSearchAgent:
             search_tool, search_query, **search_kwargs
         )
 
-        # 转换为兼容格式
-        search_results = []
-        if search_response and search_response.results:
-            # 使用配置文件控制传递给LLM的结果数量，0表示不限制
-            if self.config.MAX_SEARCH_RESULTS_FOR_LLM > 0:
-                max_results = min(
-                    len(search_response.results), self.config.MAX_SEARCH_RESULTS_FOR_LLM
-                )
-            else:
-                max_results = len(search_response.results)  # 不限制，传递所有结果
-            for result in search_response.results[:max_results]:
-                search_results.append(
-                    {
-                        "title": result.title_or_content,
-                        "url": result.url or "",
-                        "content": result.title_or_content,
-                        "score": result.hotness_score,
-                        "raw_content": result.title_or_content,
-                        "published_date": result.publish_time.isoformat()
-                        if result.publish_time
-                        else None,
-                        "platform": result.platform,
-                        "content_type": result.content_type,
-                        "author": result.author_nickname,
-                        "engagement": result.engagement,
-                        "sentiment_label": result.sentiment_label,
-                        "sentiment_score": result.sentiment_score,
-                    }
-                )
+        search_results = self._search_results_from_response(search_response)
 
         if search_results:
             _message = f"  - 找到 {len(search_results)} 个搜索结果"
@@ -635,18 +717,29 @@ class DeepSearchAgent:
         }
 
         # 更新状态
-        self.state = self.first_summary_node.mutate_state(
-            summary_input, self.state, paragraph_index
+        state = self.first_summary_node.mutate_state(
+            summary_input,
+            state,
+            paragraph_index,
         )
 
         logger.info("  - 初始总结完成")
+        return state
 
-    def _reflection_loop(self, paragraph_index: int):
+    def _reflection_loop(
+        self,
+        paragraph_index: int,
+        state: State | None = None,
+    ) -> State:
         """执行反思循环"""
-        paragraph = self.state.paragraphs[paragraph_index]
+        state = state or self.state
+        paragraph = state.paragraphs[paragraph_index]
 
-        for reflection_i in range(self.config.MAX_REFLECTIONS):
-            logger.info(f"  - 反思 {reflection_i + 1}/{self.config.MAX_REFLECTIONS}...")
+        for reflection_i in range(self.mode_preset.reflection_rounds):
+            logger.info(
+                f"  - 反思 {reflection_i + 1}/"
+                f"{self.mode_preset.reflection_rounds}..."
+            )
 
             # 准备反思输入
             reflection_input = {
@@ -740,36 +833,7 @@ class DeepSearchAgent:
                 search_tool, search_query, **search_kwargs
             )
 
-            # 转换为兼容格式
-            search_results = []
-            if search_response and search_response.results:
-                # 使用配置文件控制传递给LLM的结果数量，0表示不限制
-                if self.config.MAX_SEARCH_RESULTS_FOR_LLM > 0:
-                    max_results = min(
-                        len(search_response.results),
-                        self.config.MAX_SEARCH_RESULTS_FOR_LLM,
-                    )
-                else:
-                    max_results = len(search_response.results)  # 不限制，传递所有结果
-                for result in search_response.results[:max_results]:
-                    search_results.append(
-                        {
-                            "title": result.title_or_content,
-                            "url": result.url or "",
-                            "content": result.title_or_content,
-                            "score": result.hotness_score,
-                            "raw_content": result.title_or_content,
-                            "published_date": result.publish_time.isoformat()
-                            if result.publish_time
-                            else None,
-                            "platform": result.platform,
-                            "content_type": result.content_type,
-                            "author": result.author_nickname,
-                            "engagement": result.engagement,
-                            "sentiment_label": result.sentiment_label,
-                            "sentiment_score": result.sentiment_score,
-                        }
-                    )
+            search_results = self._search_results_from_response(search_response)
 
             if search_results:
                 _message = f"    找到 {len(search_results)} 个反思搜索结果"
@@ -799,11 +863,14 @@ class DeepSearchAgent:
             }
 
             # 更新状态
-            self.state = self.reflection_summary_node.mutate_state(
-                reflection_summary_input, self.state, paragraph_index
+            state = self.reflection_summary_node.mutate_state(
+                reflection_summary_input,
+                state,
+                paragraph_index,
             )
 
             logger.info(f"    反思 {reflection_i + 1} 完成")
+        return state
 
     def _generate_final_report(self) -> str:
         """生成最终报告"""

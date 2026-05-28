@@ -633,6 +633,7 @@ a {
 
 .format-row,
 .report-engine-row,
+.insight-mode-row,
 .platform-checks {
   display: flex;
   align-items: end;
@@ -640,8 +641,13 @@ a {
   flex-wrap: wrap;
 }
 
-.report-engine-row {
+.report-engine-row,
+.insight-mode-row {
   grid-column: 1 / -1;
+}
+
+.insight-mode-row.disabled {
+  opacity: 0.58;
 }
 
 .modal-engine-row {
@@ -676,6 +682,49 @@ a {
   width: 16px;
   height: 16px;
   accent-color: var(--green);
+}
+
+.segmented-control {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: #ffffff;
+}
+
+.segmented-option {
+  position: relative;
+  min-height: 34px;
+  min-width: 76px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.segmented-option input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.segmented-option.active {
+  background: var(--ink);
+  color: #ffffff;
+}
+
+.segmented-option.disabled {
+  cursor: not-allowed;
+}
+
+.segmented-option:not(.disabled):focus-within {
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.16);
 }
 
 .task-table {
@@ -1477,6 +1526,7 @@ a {
   .crawler-data-metrics,
   .format-row,
   .report-engine-row,
+  .insight-mode-row,
   .platform-checks {
     align-items: flex-start;
     justify-content: flex-start;

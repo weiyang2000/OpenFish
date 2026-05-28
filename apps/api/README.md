@@ -29,6 +29,10 @@ keys, engine inputs, database configuration, crawler accounts, or submodules
 make the task fail with a structured error instead of creating placeholder
 artifacts.
 
+Report task orchestration accepts `sourceScope.orchestration.insightMode` with
+`fast`, `normal`, or `deep`. The field defaults to `normal` and is only applied
+when the Insight Engine is selected for the task or rerun.
+
 ## Persistence
 
 SaaS metadata, crawler persistence, crawler-data reads, and Insight Engine

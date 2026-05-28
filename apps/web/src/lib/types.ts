@@ -32,6 +32,8 @@ export type ReportFormat = "html" | "json" | "md" | "pdf";
 
 export type ReportEngineId = "query" | "media" | "insight";
 
+export type ReportInsightMode = "fast" | "normal" | "deep";
+
 export type RunMode = "topic_extraction" | "deep_sentiment" | "full_workflow";
 
 export type IdentityListType = "allow" | "block";
@@ -120,6 +122,7 @@ export interface ReportTask {
     orchestration?: {
       enabled?: boolean;
       mode?: string;
+      insightMode?: ReportInsightMode;
       status?: string;
       workspacePath?: string;
       rerunEngines?: ReportEngineId[];
@@ -239,7 +242,7 @@ export interface IdentityRule {
 export interface ConfigField {
   key: string;
   label: string;
-  group: "server" | "database" | "llm" | "search" | "crawler";
+  group: "server" | "database" | "llm" | "engine" | "search" | "crawler";
   type: "string" | "number" | "boolean" | "enum" | "secret" | "url";
   value: string;
   editable: boolean;
@@ -411,6 +414,7 @@ export interface CreateReportTaskInput {
     orchestration?: {
       enabled?: boolean;
       engines: ReportEngineId[];
+      insightMode?: ReportInsightMode;
     };
   };
   outputFormats: ReportFormat[];

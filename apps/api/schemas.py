@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 PLATFORM_IDS = ("xhs", "dy", "ks", "bili", "wb", "tieba", "zhihu")
 COMPONENT_IDS = ("query", "media", "insight", "forum", "report", "mindspider", "database")
 REPORT_FORMATS = ("html", "json", "md", "pdf")
+REPORT_INSIGHT_MODES = ("fast", "normal", "deep")
 REPORT_STATUSES = ("queued", "pending", "running", "succeeded", "failed", "cancelled")
 CRAWLER_STATUSES = (
     "queued",
@@ -67,6 +68,7 @@ class ReportOrchestrationScope(BaseModel):
         default_factory=lambda: ["query", "media", "insight"],
         min_length=1,
     )
+    insightMode: Literal["fast", "normal", "deep"] = "normal"
 
     @field_validator("engines")
     @classmethod
