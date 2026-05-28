@@ -164,8 +164,8 @@ def build_report_structure_prompt(mode_preset: InsightModePreset) -> str:
 </OUTPUT JSON SCHEMA>
 
 标题和内容属性将用于后续的深度数据挖掘和分析。
-确保输出是一个符合上述输出JSON模式定义的JSON对象。
-只返回JSON对象，不要有解释或额外文本。
+确保输出是一个符合上述输出JSON模式定义的JSON数组。
+只返回JSON数组，不要有解释或额外文本。
 """
 
 

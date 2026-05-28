@@ -1317,7 +1317,7 @@ components:
           type: string
         group:
           type: string
-          enum: [server, database, llm, search, crawler]
+          enum: [server, database, llm, engine, search, crawler]
         type:
           $ref: "#/components/schemas/ConfigFieldType"
         value:

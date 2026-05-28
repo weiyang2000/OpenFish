@@ -242,7 +242,7 @@ export interface IdentityRule {
 export interface ConfigField {
   key: string;
   label: string;
-  group: "server" | "database" | "llm" | "search" | "crawler";
+  group: "server" | "database" | "llm" | "engine" | "search" | "crawler";
   type: "string" | "number" | "boolean" | "enum" | "secret" | "url";
   value: string;
   editable: boolean;

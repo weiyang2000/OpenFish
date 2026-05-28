@@ -1986,7 +1986,7 @@ export function ConsoleShell() {
               }
             />
             <div className="config-groups">
-              {(["server", "database", "llm", "search", "crawler"] as ConfigField["group"][]).map((group) => {
+              {(["server", "database", "llm", "engine", "search", "crawler"] as ConfigField["group"][]).map((group) => {
                 const fields = snapshot.configFields.filter((field) => field.group === group);
                 if (fields.length === 0) return null;
                 return (

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.api.schemas import MASK, UserRef
+from apps.api.schemas import MASK, REPORT_INSIGHT_MODES, UserRef
 from apps.api.services.common import utc_now
 from apps.api.storage import Store, dumps, loads
 
@@ -62,7 +62,6 @@ CONFIG_KEYS = [
 ]
 
 SEARCH_TOOL_OPTIONS = ["AnspireAPI", "BochaAPI"]
-INSIGHT_MODE_OPTIONS = ["fast", "normal", "deep"]
 
 
 def is_sensitive_key(key: str) -> bool:
@@ -139,7 +138,7 @@ class ConfigurationService:
             if key == "SEARCH_TOOL_TYPE":
                 field["options"] = SEARCH_TOOL_OPTIONS
             if key == "INSIGHT_MODE":
-                field["options"] = INSIGHT_MODE_OPTIONS
+                field["options"] = list(REPORT_INSIGHT_MODES)
             if updated_at:
                 field["lastUpdatedAt"] = updated_at
             fields.append(field)

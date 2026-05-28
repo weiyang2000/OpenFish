@@ -302,6 +302,9 @@ def test_openapi_contract_exposes_insight_mode(contract: dict[str, Any]):
     assert orchestration_properties["insightMode"] == {
         "$ref": "#/components/schemas/InsightMode"
     }
+    assert "engine" in contract["components"]["schemas"]["SystemConfigField"][
+        "properties"
+    ]["group"]["enum"]
 
 
 def test_crawler_strategy_contract_sample_preserves_platform_id(

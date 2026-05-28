@@ -104,6 +104,7 @@ def test_insight_mode_preset_contracts_and_prompts():
     deep_structure_prompt = build_report_structure_prompt(deep)
     assert "当前模式：fast" in fast_structure_prompt
     assert "设计 3 个核心段落" in fast_structure_prompt
+    assert "只返回JSON数组" in fast_structure_prompt
     assert "当前模式：deep" in deep_structure_prompt
     assert "设计 7 个核心段落" in deep_structure_prompt
 
@@ -210,6 +211,29 @@ def test_normal_mode_keeps_legacy_configurable_defaults():
     assert preset.paragraph_count == 5
     assert preset.reflection_rounds == 2
     assert preset.max_search_results_for_llm == 7
+
+
+def test_agent_mode_override_does_not_mutate_shared_settings(monkeypatch, tmp_path):
+    import InsightEngine.agent as agent_module
+
+    shared_settings = SimpleNamespace(
+        INSIGHT_MODE="normal",
+        OUTPUT_DIR=str(tmp_path),
+    )
+    monkeypatch.setattr(agent_module, "settings", shared_settings)
+    monkeypatch.setattr(
+        DeepSearchAgent,
+        "_initialize_llm",
+        lambda self: SimpleNamespace(get_model_info=lambda: "fake-llm"),
+    )
+    monkeypatch.setattr(agent_module, "MediaCrawlerDB", lambda: SimpleNamespace())
+    monkeypatch.setattr(DeepSearchAgent, "_initialize_nodes", lambda self: None)
+
+    agent = DeepSearchAgent(mode="fast")
+
+    assert shared_settings.INSIGHT_MODE == "normal"
+    assert agent.active_mode == "fast"
+    assert agent.mode_preset.mode is InsightMode.FAST
 
 
 class _ParallelStubAgent(DeepSearchAgent):

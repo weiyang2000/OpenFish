@@ -348,7 +348,7 @@ test("creates report tasks with selected orchestration engines", async ({ page }
     expect(route.request().method()).toBe("POST");
     reportPayload = route.request().postDataJSON();
     const task = {
-      id: "report_new",
+      id: `report_new_${reportTasks.length + 1}`,
       workspaceId: "workspace_demo",
       topic: reportPayload?.topic,
       status: "queued",
@@ -360,7 +360,7 @@ test("creates report tasks with selected orchestration engines", async ({ page }
       createdAt: timestamp,
       updatedAt: timestamp
     };
-    reportTasks = [task];
+    reportTasks = [task, ...reportTasks];
     await route.fulfill({
       status: 202,
       contentType: "application/json",

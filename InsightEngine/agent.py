@@ -55,7 +55,7 @@ class DeepSearchAgent:
         self.config = config or settings
         configured_mode = mode or getattr(self.config, "INSIGHT_MODE", "normal")
         self.mode_preset = get_insight_mode_preset(configured_mode, self.config)
-        self.config.INSIGHT_MODE = self.mode_preset.mode.value
+        self.active_mode = self.mode_preset.mode.value
 
         # 初始化LLM客户端
         self.llm_client = self._initialize_llm()
