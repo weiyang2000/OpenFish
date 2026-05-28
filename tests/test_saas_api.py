@@ -77,7 +77,7 @@ def test_system_config_masks_secrets_and_ignores_mask_placeholder(client: TestCl
     assert fields["REPORT_ENGINE_API_KEY"]["sensitive"] is True
     assert fields["SEARCH_TOOL_TYPE"]["value"] == "BochaAPI"
     assert fields["INSIGHT_MODE"]["value"] == "deep"
-    assert fields["INSIGHT_MODE"]["group"] == "engine"
+    assert fields["INSIGHT_MODE"]["group"] == "llm"
     assert fields["INSIGHT_MODE"]["type"] == "enum"
     assert fields["INSIGHT_MODE"]["options"] == ["fast", "normal", "deep"]
     assert fields["MAX_REFLECTIONS"]["value"] == "2"

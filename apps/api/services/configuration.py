@@ -74,7 +74,6 @@ def config_group(key: str) -> str:
     if key == "DATABASE_URL" or key.startswith("DB_"):
         return "database"
     if key.startswith(("MAX_", "DEFAULT_")) or key in {
-        "INSIGHT_MODE",
         "SEARCH_TIMEOUT",
         "SAVE_INTERMEDIATE_STATES",
     }:
