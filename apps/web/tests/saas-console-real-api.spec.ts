@@ -592,6 +592,161 @@ test("points report downloads at the API origin with workspace fallback", async 
   );
 });
 
+test("shows real API task logs newest first after open and refresh", async ({ page }) => {
+  let reportLogRequests = 0;
+
+  await routeJson(page, "/system/components", {
+    success: true,
+    components: [
+      { id: "report", name: "Report Engine", status: "running" },
+      { id: "mindspider", name: "MindSpider", status: "running" }
+    ]
+  });
+  await routeJson(page, "/report-templates", { success: true, templates: [] });
+  await routeJson(page, "/report-tasks", {
+    success: true,
+    tasks: [
+      {
+        id: "report_logs",
+        workspaceId: "workspace_demo",
+        topic: "报告日志排序验证",
+        status: "running",
+        progress: 35,
+        stage: "agent_running",
+        templateId: "auto",
+        sourceScope: {
+          orchestration: {
+            enabled: true,
+            engines: ["query", "media", "insight"],
+            insightMode: "normal"
+          }
+        },
+        artifacts: [{ format: "html", ready: false }],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ]
+  });
+  await routeJson(page, "/crawler-tasks", {
+    success: true,
+    tasks: [
+      {
+        id: "crawler_logs",
+        workspaceId: "workspace_demo",
+        runMode: "deep_sentiment",
+        status: "running",
+        progress: 40,
+        targetDate: "2026-05-22",
+        startDate: "2026-05-22",
+        endDate: "2026-05-25",
+        schedule: { mode: "manual", timezone: "Asia/Shanghai" },
+        platforms: ["wb"],
+        keywords: ["日志排序"],
+        keywordSource: "manual",
+        stats: {
+          totalKeywords: 1,
+          totalPlatforms: 1,
+          totalTasks: 1,
+          successfulTasks: 0,
+          failedTasks: 0,
+          totalNotes: 10,
+          totalComments: 20
+        },
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ]
+  });
+  await routeJson(page, "/crawler-strategies", { success: true, strategies: [] });
+  await routeJson(page, "/crawler-accounts", { success: true, accounts: [] });
+  await routeJson(page, "/platforms", {
+    success: true,
+    platforms: [platform("wb", "微博", { allow: 0, block: 0 })]
+  });
+  await routeJson(page, "/system/config", { success: true, fields: [] });
+  await routeJson(page, "/logs?tail=300", { success: true, lines: [] });
+  await page.route(`${apiBase}/platforms/*/identity-lists`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, rules: [] })
+    });
+  });
+  await page.route(`${apiBase}/report-tasks/report_logs/logs`, async (route) => {
+    reportLogRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        taskId: "report_logs",
+        taskType: "report",
+        events: [
+          {
+            id: "1",
+            type: "status",
+            taskId: "report_logs",
+            timestamp: "2026-05-22T10:00:00Z",
+            payload: { message: "older report event" }
+          },
+          {
+            id: "2",
+            type: "status",
+            taskId: "report_logs",
+            timestamp: "2026-05-22T10:05:00Z",
+            payload: { message: `newer report event ${reportLogRequests}` }
+          }
+        ]
+      })
+    });
+  });
+  await page.route(`${apiBase}/crawler-tasks/crawler_logs/logs`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        taskId: "crawler_logs",
+        taskType: "crawler",
+        events: [
+          {
+            id: "10",
+            type: "status",
+            taskId: "crawler_logs",
+            timestamp: "2026-05-22T10:10:00Z",
+            payload: { message: "crawler numeric id 10" }
+          },
+          {
+            id: "11",
+            type: "status",
+            taskId: "crawler_logs",
+            timestamp: "2026-05-22T10:10:00Z",
+            payload: { message: "crawler numeric id 11" }
+          }
+        ]
+      })
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "报告" }).click();
+  await page.locator(".task-row", { hasText: "报告日志排序验证" }).getByTitle("查看任务日志").click();
+  const reportLogs = page.locator(".task-log-row");
+  await expect(reportLogs.first()).toContainText("newer report event 1");
+  await expect(reportLogs.nth(1)).toContainText("older report event");
+
+  await page.getByTitle("刷新任务日志").click();
+  await expect(reportLogs.first()).toContainText("newer report event 2");
+  expect(reportLogRequests).toBe(2);
+
+  await page.getByTitle("关闭").click();
+  await page.getByRole("button", { name: "爬虫" }).click();
+  await page.locator(".crawler-row", { hasText: "日志排序" }).getByTitle("查看任务日志").click();
+  const crawlerLogs = page.locator(".task-log-row");
+  await expect(crawlerLogs.first()).toContainText("crawler numeric id 11");
+  await expect(crawlerLogs.nth(1)).toContainText("crawler numeric id 10");
+});
+
 async function routeJson(page: import("@playwright/test").Page, path: string, body: unknown) {
   await page.route(`${apiBase}${path}`, async (route) => {
     await route.fulfill({

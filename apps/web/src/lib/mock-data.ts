@@ -678,6 +678,22 @@ export const logs: LogLine[] = [
     level: "info",
     timestamp: "2026-05-22T09:44:31Z",
     message: "Forum host collected Query, Media, and Insight responses"
+  },
+  {
+    id: "log_006",
+    source: "report",
+    level: "info",
+    timestamp: "2026-05-22T09:45:22Z",
+    message: "Report task report_20260522_002 generated outline",
+    taskId: "report_20260522_002"
+  },
+  {
+    id: "log_007",
+    source: "crawler",
+    level: "info",
+    timestamp: "2026-05-22T09:46:18Z",
+    message: "dy platform crawler finished comment enrichment",
+    taskId: "crawler_20260522_002"
   }
 ];
 
