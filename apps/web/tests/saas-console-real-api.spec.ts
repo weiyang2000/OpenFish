@@ -757,8 +757,10 @@ async function routeJson(page: import("@playwright/test").Page, path: string, bo
   });
 }
 
+type TestPlatformId = "wb" | "xhs";
+
 function platform(
-  id: "wb" | "xhs",
+  id: TestPlatformId,
   name: string,
   identityRuleCounts: { allow: number; block: number }
 ) {
@@ -781,6 +783,74 @@ function platform(
       loginType: "qrcode",
       headless: true,
       updatedAt: timestamp
+    }
+  };
+}
+
+type CrawlerDataFixture = {
+  id: string;
+  platformId: TestPlatformId;
+  contentType: "content" | "comment";
+  tableName: string;
+  sourceId: string;
+  title: string;
+  textSnippet: string;
+  author?: string;
+  keyword?: string;
+  url?: string;
+  createdAt: string;
+  scrapedAt: string;
+  sentiment: "positive" | "neutral" | "negative" | "unknown";
+  metrics: {
+    likes: number;
+    comments: number;
+  };
+};
+
+function crawlerDataRecord(
+  overrides: Partial<CrawlerDataFixture> & Pick<CrawlerDataFixture, "id" | "platformId" | "title" | "textSnippet">
+): CrawlerDataFixture {
+  return {
+    contentType: "content",
+    tableName: `${overrides.platformId}_note`,
+    sourceId: overrides.id,
+    author: "测试账号",
+    createdAt: timestamp,
+    scrapedAt: timestamp,
+    sentiment: "neutral",
+    metrics: {
+      likes: 10,
+      comments: 1
+    },
+    ...overrides
+  };
+}
+
+function crawlerDataPage(records: CrawlerDataFixture[], page: number, pageSize: number) {
+  const totalPages = records.length === 0 ? 0 : Math.ceil(records.length / pageSize);
+  const pageRecords = records.slice((page - 1) * pageSize, page * pageSize);
+
+  return {
+    success: true,
+    records: pageRecords,
+    summary: {
+      totalRecords: records.length,
+      byPlatform: records.reduce<Partial<Record<TestPlatformId, number>>>((acc, record) => {
+        acc[record.platformId] = (acc[record.platformId] ?? 0) + 1;
+        return acc;
+      }, {}),
+      byType: records.reduce<Partial<Record<"content" | "comment", number>>>((acc, record) => {
+        acc[record.contentType] = (acc[record.contentType] ?? 0) + 1;
+        return acc;
+      }, {})
+    },
+    pageInfo: {
+      page,
+      pageSize,
+      totalRecords: records.length,
+      totalPages,
+      hasPreviousPage: page > 1 && totalPages > 0,
+      hasNextPage: totalPages > 0 && page < totalPages
     }
   };
 }
