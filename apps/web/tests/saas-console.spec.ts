@@ -1,10 +1,55 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 
 test.skip(process.env.NEXT_PUBLIC_USE_MOCKS === "false", "mock adapter coverage runs only in mock mode");
+
+const crawlerDataPlatformTabs = ["全部平台", "微博", "小红书", "知乎", "抖音", "Bilibili", "贴吧", "快手"];
 
 async function openConsole(page: Page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "舆情 SaaS 控制台" })).toBeVisible();
+}
+
+async function expectCrawlerDataTitleOrder(row: Locator, title: string, keyword: string) {
+  const items = await row.locator(".crawler-data-title").evaluate((titleNode) =>
+    Array.from(titleNode.children).map((element) => ({
+      className: String((element as HTMLElement).className),
+      text: (element.textContent ?? "").trim()
+    }))
+  );
+
+  expect(items[0]?.text).toBe(title);
+  expect(items[1]).toMatchObject({
+    className: expect.stringContaining("crawler-data-keyword-marker"),
+    text: keyword
+  });
+  expect(items[2]?.text).toBe("内容");
+  expect(items[3]?.text).toContain("情绪：");
+}
+
+async function expectCrawlerDataRowsWithinLayout(page: Page) {
+  const layoutIssues = await page.locator(".crawler-data-row").evaluateAll((rows) =>
+    rows.filter((row) => {
+      const rowRect = row.getBoundingClientRect();
+      const parentRect = row.parentElement?.getBoundingClientRect();
+      const extendsPastContainer =
+        Boolean(parentRect) && (rowRect.left < parentRect!.left - 1 || rowRect.right > parentRect!.right + 1);
+      const extendsPastViewport = rowRect.left < -1 || rowRect.right > window.innerWidth + 1;
+      const childRects = Array.from(row.children).map((child) => child.getBoundingClientRect());
+      const hasOverlap = childRects.some((first, firstIndex) =>
+        childRects.slice(firstIndex + 1).some(
+          (second) =>
+            first.left < second.right - 1 &&
+            first.right > second.left + 1 &&
+            first.top < second.bottom - 1 &&
+            first.bottom > second.top + 1
+        )
+      );
+
+      return extendsPastContainer || extendsPastViewport || hasOverlap;
+    }).length
+  );
+
+  expect(layoutIssues).toBe(0);
 }
 
 test("opens every primary SaaS console section", async ({ page }) => {
@@ -153,6 +198,8 @@ test("searches crawler database records", async ({ page }) => {
   await expect(page.getByText("正向").first()).toBeVisible();
   await expect(page.getByText("xhs_note", { exact: true })).toHaveCount(0);
   const contentRow = page.locator(".crawler-data-row", { hasText: "社区养老服务体验" });
+  await expect(contentRow.locator(".crawler-data-keyword-marker")).toHaveText("养老服务");
+  await expectCrawlerDataTitleOrder(contentRow, "社区养老服务体验", "养老服务");
   await expect(contentRow.getByTitle("打开原文")).toBeVisible();
   await expect(contentRow.getByTitle("删除爬取数据")).toBeVisible();
   await contentRow.getByTitle("删除爬取数据").click();
@@ -167,6 +214,33 @@ test("searches crawler database records", async ({ page }) => {
   await expect(page.getByText("社区养老服务体验")).toHaveCount(0);
 });
 
+test("filters crawler database records with platform tabs", async ({ page }) => {
+  await openConsole(page);
+  await page.getByRole("button", { name: "爬取数据" }).click();
+
+  const tablist = page.getByRole("tablist", { name: "爬取数据平台筛选" });
+  for (const tabName of crawlerDataPlatformTabs) {
+    await expect(tablist.getByRole("tab", { name: tabName })).toBeVisible();
+  }
+
+  await expect(tablist.getByRole("tab", { name: "全部平台" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toBeVisible();
+  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toBeVisible();
+
+  await tablist.getByRole("tab", { name: "微博" }).click();
+  await expect(tablist.getByRole("tab", { name: "微博" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toBeVisible();
+  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toHaveCount(0);
+  const weiboRow = page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" });
+  await expect(weiboRow).not.toContainText("微博");
+  await expect(weiboRow).not.toContainText("weibo_note");
+
+  await tablist.getByRole("tab", { name: "小红书" }).click();
+  await expect(tablist.getByRole("tab", { name: "小红书" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toBeVisible();
+  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toHaveCount(0);
+});
+
 test("selects current crawler data page and batch deletes records", async ({ page }) => {
   await openConsole(page);
   await page.getByRole("button", { name: "爬取数据" }).click();
@@ -178,6 +252,19 @@ test("selects current crawler data page and batch deletes records", async ({ pag
 
   await expect(page.getByText("已删除选中爬取数据")).toBeVisible();
   await expect(page.locator(".crawler-data-row")).toHaveCount(0);
+});
+
+test("keeps crawler data rows compact on desktop and mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openConsole(page);
+  await page.getByRole("button", { name: "爬取数据" }).click();
+
+  await expect(page.locator(".crawler-data-row").first()).toBeVisible();
+  await expectCrawlerDataRowsWithinLayout(page);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".crawler-data-row").first()).toBeVisible();
+  await expectCrawlerDataRowsWithinLayout(page);
 });
 
 test("validates identity list input and adds a platform rule", async ({ page }) => {

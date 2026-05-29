@@ -592,6 +592,157 @@ test("points report downloads at the API origin with workspace fallback", async 
   );
 });
 
+test("queries crawler data platform filters pagination and empty keywords through API routes", async ({ page }) => {
+  const crawlerDataRequests: URL[] = [];
+  const crawlerRecords = [
+    crawlerDataRecord({
+      id: "xhs_note:xhs_001",
+      platformId: "xhs",
+      tableName: "xhs_note",
+      sourceId: "xhs_001",
+      title: "社区养老服务体验",
+      textSnippet: "家附近新开的社区养老服务中心开始提供康复护理和日间照护。",
+      author: "研究采集号",
+      keyword: "养老服务",
+      url: "https://www.xiaohongshu.com/explore/xhs_001",
+      sentiment: "positive"
+    }),
+    crawlerDataRecord({
+      id: "weibo_note:wb_002",
+      platformId: "wb",
+      tableName: "weibo_note",
+      sourceId: "wb_002",
+      title: "医保支付改革讨论",
+      textSnippet: "多地试点长期护理保险与医保支付衔接。",
+      author: "BettaFish 运营号",
+      keyword: "医保支付",
+      url: "https://weibo.com/detail/wb_002",
+      sentiment: "neutral"
+    }),
+    crawlerDataRecord({
+      id: "xhs_comment:xhsc_003",
+      platformId: "xhs",
+      contentType: "comment",
+      tableName: "xhs_note_comment",
+      sourceId: "xhsc_003",
+      title: "未带关键词评论",
+      textSnippet: "这条评论没有原始关键词字段。",
+      author: "xhs_reader",
+      sentiment: "unknown"
+    }),
+    ...Array.from({ length: 10 }, (_, index) =>
+      crawlerDataRecord({
+        id: `weibo_note:page_${index + 1}`,
+        platformId: "wb",
+        tableName: "weibo_note",
+        sourceId: `page_${index + 1}`,
+        title: `分页样本 ${index + 1}`,
+        textSnippet: `分页和页大小回归样本 ${index + 1}`,
+        author: "分页账号",
+        keyword: `分页词${index + 1}`,
+        sentiment: index % 2 === 0 ? "positive" : "neutral"
+      })
+    )
+  ];
+
+  await routeJson(page, "/system/components", {
+    success: true,
+    components: [{ id: "mindspider", name: "MindSpider", status: "running" }]
+  });
+  await routeJson(page, "/report-templates", { success: true, templates: [] });
+  await routeJson(page, "/report-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/crawler-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/crawler-strategies", { success: true, strategies: [] });
+  await routeJson(page, "/crawler-accounts", { success: true, accounts: [] });
+  await routeJson(page, "/platforms", {
+    success: true,
+    platforms: [
+      platform("wb", "微博", { allow: 0, block: 0 }),
+      platform("xhs", "小红书", { allow: 0, block: 0 })
+    ]
+  });
+  await routeJson(page, "/system/config", { success: true, fields: [] });
+  await routeJson(page, "/logs?tail=300", { success: true, lines: [] });
+  await page.route(`${apiBase}/platforms/*/identity-lists`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ success: true, rules: [] })
+    });
+  });
+  await page.route(`${apiBase}/crawler-data*`, async (route) => {
+    expect(route.request().method()).toBe("GET");
+    const requestUrl = new URL(route.request().url());
+    crawlerDataRequests.push(requestUrl);
+
+    const platformFilter = requestUrl.searchParams.get("platform");
+    const typeFilter = requestUrl.searchParams.get("contentType");
+    const query = requestUrl.searchParams.get("q")?.trim().toLowerCase();
+    const pageNumber = Number(requestUrl.searchParams.get("page") ?? 1);
+    const pageSize = Number(requestUrl.searchParams.get("pageSize") ?? 20);
+    const filteredRecords = crawlerRecords.filter((record) => {
+      const platformMatches = !platformFilter || record.platformId === platformFilter;
+      const typeMatches = !typeFilter || record.contentType === typeFilter;
+      const haystack = `${record.title} ${record.textSnippet} ${record.author ?? ""} ${record.keyword ?? ""}`.toLowerCase();
+      return platformMatches && typeMatches && (!query || haystack.includes(query));
+    });
+
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(crawlerDataPage(filteredRecords, pageNumber, pageSize))
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "爬取数据" }).click();
+
+  const tablist = page.getByRole("tablist", { name: "爬取数据平台筛选" });
+  await expect(tablist.getByRole("tab", { name: "全部平台" })).toBeVisible();
+  await expect(tablist.getByRole("tab", { name: "微博" })).toBeVisible();
+  await expect(tablist.getByRole("tab", { name: "小红书" })).toBeVisible();
+  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toBeVisible();
+  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toBeVisible();
+
+  await tablist.getByRole("tab", { name: "小红书" }).click();
+  await expect(tablist.getByRole("tab", { name: "小红书" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toBeVisible();
+  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toHaveCount(0);
+
+  await page.getByLabel("类型").selectOption("comment");
+  await page.getByRole("button", { name: "检索" }).click();
+  const emptyKeywordRow = page.locator(".crawler-data-row", { hasText: "未带关键词评论" });
+  await expect(emptyKeywordRow).toBeVisible();
+  await expect(emptyKeywordRow.locator(".crawler-data-keyword-marker")).toHaveCount(0);
+
+  await tablist.getByRole("tab", { name: "全部平台" }).click();
+  await page.getByLabel("类型").selectOption("all");
+  await page.getByPlaceholder("标题、正文、作者、关键词").fill("医保");
+  await page.getByRole("button", { name: "检索" }).click();
+  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toBeVisible();
+  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toHaveCount(0);
+
+  await page.getByPlaceholder("标题、正文、作者、关键词").fill("");
+  await page.getByRole("button", { name: "检索" }).click();
+  await page.getByLabel("爬取数据每页条数").selectOption("10");
+  await expect(page.getByText("1 / 2")).toBeVisible();
+  await expect(page.locator(".crawler-data-row")).toHaveCount(10);
+  await page.getByRole("button", { name: "下一页" }).click();
+  await expect(page.getByText("2 / 2")).toBeVisible();
+  await expect(page.locator(".crawler-data-row")).toHaveCount(3);
+  await page.getByRole("button", { name: "上一页" }).click();
+  await expect(page.getByText("1 / 2")).toBeVisible();
+
+  expect(crawlerDataRequests.some((url) => url.searchParams.get("platform") === "xhs")).toBe(true);
+  expect(crawlerDataRequests.some((url) => url.searchParams.get("contentType") === "comment")).toBe(true);
+  expect(crawlerDataRequests.some((url) => url.searchParams.get("q") === "医保")).toBe(true);
+  expect(
+    crawlerDataRequests.some(
+      (url) => url.searchParams.get("page") === "2" && url.searchParams.get("pageSize") === "10"
+    )
+  ).toBe(true);
+});
+
 async function routeJson(page: import("@playwright/test").Page, path: string, body: unknown) {
   await page.route(`${apiBase}${path}`, async (route) => {
     await route.fulfill({
@@ -602,8 +753,10 @@ async function routeJson(page: import("@playwright/test").Page, path: string, bo
   });
 }
 
+type TestPlatformId = "wb" | "xhs";
+
 function platform(
-  id: "wb" | "xhs",
+  id: TestPlatformId,
   name: string,
   identityRuleCounts: { allow: number; block: number }
 ) {
@@ -626,6 +779,74 @@ function platform(
       loginType: "qrcode",
       headless: true,
       updatedAt: timestamp
+    }
+  };
+}
+
+type CrawlerDataFixture = {
+  id: string;
+  platformId: TestPlatformId;
+  contentType: "content" | "comment";
+  tableName: string;
+  sourceId: string;
+  title: string;
+  textSnippet: string;
+  author?: string;
+  keyword?: string;
+  url?: string;
+  createdAt: string;
+  scrapedAt: string;
+  sentiment: "positive" | "neutral" | "negative" | "unknown";
+  metrics: {
+    likes: number;
+    comments: number;
+  };
+};
+
+function crawlerDataRecord(
+  overrides: Partial<CrawlerDataFixture> & Pick<CrawlerDataFixture, "id" | "platformId" | "title" | "textSnippet">
+): CrawlerDataFixture {
+  return {
+    contentType: "content",
+    tableName: `${overrides.platformId}_note`,
+    sourceId: overrides.id,
+    author: "测试账号",
+    createdAt: timestamp,
+    scrapedAt: timestamp,
+    sentiment: "neutral",
+    metrics: {
+      likes: 10,
+      comments: 1
+    },
+    ...overrides
+  };
+}
+
+function crawlerDataPage(records: CrawlerDataFixture[], page: number, pageSize: number) {
+  const totalPages = records.length === 0 ? 0 : Math.ceil(records.length / pageSize);
+  const pageRecords = records.slice((page - 1) * pageSize, page * pageSize);
+
+  return {
+    success: true,
+    records: pageRecords,
+    summary: {
+      totalRecords: records.length,
+      byPlatform: records.reduce<Partial<Record<TestPlatformId, number>>>((acc, record) => {
+        acc[record.platformId] = (acc[record.platformId] ?? 0) + 1;
+        return acc;
+      }, {}),
+      byType: records.reduce<Partial<Record<"content" | "comment", number>>>((acc, record) => {
+        acc[record.contentType] = (acc[record.contentType] ?? 0) + 1;
+        return acc;
+      }, {})
+    },
+    pageInfo: {
+      page,
+      pageSize,
+      totalRecords: records.length,
+      totalPages,
+      hasPreviousPage: page > 1 && totalPages > 0,
+      hasNextPage: totalPages > 0 && page < totalPages
     }
   };
 }
