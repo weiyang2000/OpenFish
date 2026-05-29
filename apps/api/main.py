@@ -80,7 +80,8 @@ def create_app(
     app.state.engine_facade = EngineFacade(root, workers_enabled)
 
     register_error_handlers(app)
-    app.include_router(build_router())
+    app.include_router(build_router(prefix="/api/v1"))
+    app.include_router(build_router(prefix="", include_in_schema=False))
     return app
 
 
@@ -121,8 +122,8 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
 
-def build_router() -> APIRouter:
-    router = APIRouter(prefix="/api/v1")
+def build_router(*, prefix: str, include_in_schema: bool = True) -> APIRouter:
+    router = APIRouter(prefix=prefix, include_in_schema=include_in_schema)
 
     @router.get("/health")
     def health(workspace_id: str = Depends(workspace_header)) -> dict[str, Any]:
