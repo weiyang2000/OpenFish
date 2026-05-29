@@ -175,6 +175,40 @@ function normalizeReportTask(task: ReportTask): ReportTask {
   };
 }
 
+function parseTaskLogTimestamp(event: TaskLogEvent): number | null {
+  const timestamp = Date.parse(event.timestamp);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function parseTaskLogNumericId(event: TaskLogEvent): number | null {
+  const match = String(event.id).trim().match(/(\d+)$/);
+  if (!match) return null;
+
+  const numericId = Number(match[1]);
+  return Number.isFinite(numericId) ? numericId : null;
+}
+
+function sortTaskLogEventsNewestFirst(events: TaskLogEvent[]): TaskLogEvent[] {
+  return events
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      const leftTime = parseTaskLogTimestamp(left.event);
+      const rightTime = parseTaskLogTimestamp(right.event);
+      if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
+        return rightTime - leftTime;
+      }
+
+      const leftId = parseTaskLogNumericId(left.event);
+      const rightId = parseTaskLogNumericId(right.event);
+      if (leftId !== null && rightId !== null && leftId !== rightId) {
+        return rightId - leftId;
+      }
+
+      return left.index - right.index;
+    })
+    .map(({ event }) => event);
+}
+
 export async function loadConsoleSnapshot(): Promise<ConsoleSnapshot> {
   if (USE_MOCKS) {
     return getMockSnapshot();
@@ -429,7 +463,7 @@ export async function listTaskLogs(taskType: TaskLogType, taskId: string): Promi
     return {
       taskId: response.taskId,
       taskType: response.taskType,
-      events: response.events
+      events: sortTaskLogEventsNewestFirst(response.events)
     };
   }
 
@@ -463,7 +497,7 @@ export async function listTaskLogs(taskType: TaskLogType, taskId: string): Promi
       }
     });
   }
-  return { taskId, taskType, events };
+  return { taskId, taskType, events: sortTaskLogEventsNewestFirst(events) };
 }
 
 export async function createCrawlerAccountLoginSession(

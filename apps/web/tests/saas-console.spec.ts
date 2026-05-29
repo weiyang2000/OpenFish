@@ -148,6 +148,23 @@ test("deletes report and crawler tasks", async ({ page }) => {
   await expect(page.locator(".task-row", { hasText: "养老服务 / 医保支付 / 养老院" })).toHaveCount(0);
 });
 
+test("shows mock task logs newest first for reports and crawlers", async ({ page }) => {
+  await openConsole(page);
+
+  await page.getByRole("button", { name: "报告" }).click();
+  await page.locator(".task-row", { hasText: "AI 教育硬件口碑变化" }).getByTitle("查看任务日志").click();
+  const reportLogs = page.locator(".task-log-row");
+  await expect(reportLogs.first()).toContainText("Report task report_20260522_002 generated outline");
+  await expect(reportLogs.nth(1)).toContainText("Report task report_20260522_002 entered agent_running stage");
+
+  await page.getByTitle("关闭").click();
+  await page.getByRole("button", { name: "爬虫" }).click();
+  await page.locator(".crawler-row", { hasText: "AI 教育硬件 / 学习机口碑" }).getByTitle("查看任务日志").click();
+  const crawlerLogs = page.locator(".task-log-row");
+  await expect(crawlerLogs.first()).toContainText("dy platform crawler finished comment enrichment");
+  await expect(crawlerLogs.nth(1)).toContainText("dy platform crawler saved 312 notes and 1480 comments");
+});
+
 test("filters crawler accounts by platform and status with empty state", async ({ page }) => {
   await openConsole(page);
   await page.getByRole("button", { name: "爬虫" }).click();

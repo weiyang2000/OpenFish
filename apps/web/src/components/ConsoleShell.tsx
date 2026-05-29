@@ -215,13 +215,16 @@ function SentimentBadge({ value = "unknown" }: { value?: CrawlerSentiment }) {
   );
 }
 
-function formatTime(value: string) {
+function formatTime(value?: string) {
+  const date = new Date(value ?? "");
+  if (!Number.isFinite(date.getTime())) return value || "未知时间";
+
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit"
-  }).format(new Date(value));
+  }).format(date);
 }
 
 function formatNumber(value: number) {

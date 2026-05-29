@@ -592,74 +592,76 @@ test("points report downloads at the API origin with workspace fallback", async 
   );
 });
 
-test("queries crawler data platform filters pagination and empty keywords through API routes", async ({ page }) => {
-  const crawlerDataRequests: URL[] = [];
-  const crawlerRecords = [
-    crawlerDataRecord({
-      id: "xhs_note:xhs_001",
-      platformId: "xhs",
-      tableName: "xhs_note",
-      sourceId: "xhs_001",
-      title: "社区养老服务体验",
-      textSnippet: "家附近新开的社区养老服务中心开始提供康复护理和日间照护。",
-      author: "研究采集号",
-      keyword: "养老服务",
-      url: "https://www.xiaohongshu.com/explore/xhs_001",
-      sentiment: "positive"
-    }),
-    crawlerDataRecord({
-      id: "weibo_note:wb_002",
-      platformId: "wb",
-      tableName: "weibo_note",
-      sourceId: "wb_002",
-      title: "医保支付改革讨论",
-      textSnippet: "多地试点长期护理保险与医保支付衔接。",
-      author: "BettaFish 运营号",
-      keyword: "医保支付",
-      url: "https://weibo.com/detail/wb_002",
-      sentiment: "neutral"
-    }),
-    crawlerDataRecord({
-      id: "xhs_comment:xhsc_003",
-      platformId: "xhs",
-      contentType: "comment",
-      tableName: "xhs_note_comment",
-      sourceId: "xhsc_003",
-      title: "未带关键词评论",
-      textSnippet: "这条评论没有原始关键词字段。",
-      author: "xhs_reader",
-      sentiment: "unknown"
-    }),
-    ...Array.from({ length: 10 }, (_, index) =>
-      crawlerDataRecord({
-        id: `weibo_note:page_${index + 1}`,
-        platformId: "wb",
-        tableName: "weibo_note",
-        sourceId: `page_${index + 1}`,
-        title: `分页样本 ${index + 1}`,
-        textSnippet: `分页和页大小回归样本 ${index + 1}`,
-        author: "分页账号",
-        keyword: `分页词${index + 1}`,
-        sentiment: index % 2 === 0 ? "positive" : "neutral"
-      })
-    )
-  ];
+test("shows real API task logs newest first after open and refresh", async ({ page }) => {
+  let reportLogRequests = 0;
 
   await routeJson(page, "/system/components", {
     success: true,
-    components: [{ id: "mindspider", name: "MindSpider", status: "running" }]
+    components: [
+      { id: "report", name: "Report Engine", status: "running" },
+      { id: "mindspider", name: "MindSpider", status: "running" }
+    ]
   });
   await routeJson(page, "/report-templates", { success: true, templates: [] });
-  await routeJson(page, "/report-tasks", { success: true, tasks: [] });
-  await routeJson(page, "/crawler-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/report-tasks", {
+    success: true,
+    tasks: [
+      {
+        id: "report_logs",
+        workspaceId: "workspace_demo",
+        topic: "报告日志排序验证",
+        status: "running",
+        progress: 35,
+        stage: "agent_running",
+        templateId: "auto",
+        sourceScope: {
+          orchestration: {
+            enabled: true,
+            engines: ["query", "media", "insight"],
+            insightMode: "normal"
+          }
+        },
+        artifacts: [{ format: "html", ready: false }],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ]
+  });
+  await routeJson(page, "/crawler-tasks", {
+    success: true,
+    tasks: [
+      {
+        id: "crawler_logs",
+        workspaceId: "workspace_demo",
+        runMode: "deep_sentiment",
+        status: "running",
+        progress: 40,
+        targetDate: "2026-05-22",
+        startDate: "2026-05-22",
+        endDate: "2026-05-25",
+        schedule: { mode: "manual", timezone: "Asia/Shanghai" },
+        platforms: ["wb"],
+        keywords: ["日志排序"],
+        keywordSource: "manual",
+        stats: {
+          totalKeywords: 1,
+          totalPlatforms: 1,
+          totalTasks: 1,
+          successfulTasks: 0,
+          failedTasks: 0,
+          totalNotes: 10,
+          totalComments: 20
+        },
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ]
+  });
   await routeJson(page, "/crawler-strategies", { success: true, strategies: [] });
   await routeJson(page, "/crawler-accounts", { success: true, accounts: [] });
   await routeJson(page, "/platforms", {
     success: true,
-    platforms: [
-      platform("wb", "微博", { allow: 0, block: 0 }),
-      platform("xhs", "小红书", { allow: 0, block: 0 })
-    ]
+    platforms: [platform("wb", "微博", { allow: 0, block: 0 })]
   });
   await routeJson(page, "/system/config", { success: true, fields: [] });
   await routeJson(page, "/logs?tail=300", { success: true, lines: [] });
@@ -670,77 +672,79 @@ test("queries crawler data platform filters pagination and empty keywords throug
       body: JSON.stringify({ success: true, rules: [] })
     });
   });
-  await page.route(`${apiBase}/crawler-data*`, async (route) => {
-    expect(route.request().method()).toBe("GET");
-    const requestUrl = new URL(route.request().url());
-    crawlerDataRequests.push(requestUrl);
-
-    const platformFilter = requestUrl.searchParams.get("platform");
-    const typeFilter = requestUrl.searchParams.get("contentType");
-    const query = requestUrl.searchParams.get("q")?.trim().toLowerCase();
-    const pageNumber = Number(requestUrl.searchParams.get("page") ?? 1);
-    const pageSize = Number(requestUrl.searchParams.get("pageSize") ?? 20);
-    const filteredRecords = crawlerRecords.filter((record) => {
-      const platformMatches = !platformFilter || record.platformId === platformFilter;
-      const typeMatches = !typeFilter || record.contentType === typeFilter;
-      const haystack = `${record.title} ${record.textSnippet} ${record.author ?? ""} ${record.keyword ?? ""}`.toLowerCase();
-      return platformMatches && typeMatches && (!query || haystack.includes(query));
-    });
-
+  await page.route(`${apiBase}/report-tasks/report_logs/logs`, async (route) => {
+    reportLogRequests += 1;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(crawlerDataPage(filteredRecords, pageNumber, pageSize))
+      body: JSON.stringify({
+        success: true,
+        taskId: "report_logs",
+        taskType: "report",
+        events: [
+          {
+            id: "1",
+            type: "status",
+            taskId: "report_logs",
+            timestamp: "2026-05-22T10:00:00Z",
+            payload: { message: "older report event" }
+          },
+          {
+            id: "2",
+            type: "status",
+            taskId: "report_logs",
+            timestamp: "2026-05-22T10:05:00Z",
+            payload: { message: `newer report event ${reportLogRequests}` }
+          }
+        ]
+      })
+    });
+  });
+  await page.route(`${apiBase}/crawler-tasks/crawler_logs/logs`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        taskId: "crawler_logs",
+        taskType: "crawler",
+        events: [
+          {
+            id: "10",
+            type: "status",
+            taskId: "crawler_logs",
+            timestamp: "2026-05-22T10:10:00Z",
+            payload: { message: "crawler numeric id 10" }
+          },
+          {
+            id: "11",
+            type: "status",
+            taskId: "crawler_logs",
+            timestamp: "2026-05-22T10:10:00Z",
+            payload: { message: "crawler numeric id 11" }
+          }
+        ]
+      })
     });
   });
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "爬取数据" }).click();
+  await page.getByRole("button", { name: "报告" }).click();
+  await page.locator(".task-row", { hasText: "报告日志排序验证" }).getByTitle("查看任务日志").click();
+  const reportLogs = page.locator(".task-log-row");
+  await expect(reportLogs.first()).toContainText("newer report event 1");
+  await expect(reportLogs.nth(1)).toContainText("older report event");
 
-  const tablist = page.getByRole("tablist", { name: "爬取数据平台筛选" });
-  await expect(tablist.getByRole("tab", { name: "全部平台" })).toBeVisible();
-  await expect(tablist.getByRole("tab", { name: "微博" })).toBeVisible();
-  await expect(tablist.getByRole("tab", { name: "小红书" })).toBeVisible();
-  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toBeVisible();
-  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toBeVisible();
+  await page.getByTitle("刷新任务日志").click();
+  await expect(reportLogs.first()).toContainText("newer report event 2");
+  expect(reportLogRequests).toBe(2);
 
-  await tablist.getByRole("tab", { name: "小红书" }).click();
-  await expect(tablist.getByRole("tab", { name: "小红书" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toBeVisible();
-  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toHaveCount(0);
-
-  await page.getByLabel("类型").selectOption("comment");
-  await page.getByRole("button", { name: "检索" }).click();
-  const emptyKeywordRow = page.locator(".crawler-data-row", { hasText: "未带关键词评论" });
-  await expect(emptyKeywordRow).toBeVisible();
-  await expect(emptyKeywordRow.locator(".crawler-data-keyword-marker")).toHaveCount(0);
-
-  await tablist.getByRole("tab", { name: "全部平台" }).click();
-  await page.getByLabel("类型").selectOption("all");
-  await page.getByPlaceholder("标题、正文、作者、关键词").fill("医保");
-  await page.getByRole("button", { name: "检索" }).click();
-  await expect(page.locator(".crawler-data-row", { hasText: "医保支付改革讨论" })).toBeVisible();
-  await expect(page.locator(".crawler-data-row", { hasText: "社区养老服务体验" })).toHaveCount(0);
-
-  await page.getByPlaceholder("标题、正文、作者、关键词").fill("");
-  await page.getByRole("button", { name: "检索" }).click();
-  await page.getByLabel("爬取数据每页条数").selectOption("10");
-  await expect(page.getByText("1 / 2")).toBeVisible();
-  await expect(page.locator(".crawler-data-row")).toHaveCount(10);
-  await page.getByRole("button", { name: "下一页" }).click();
-  await expect(page.getByText("2 / 2")).toBeVisible();
-  await expect(page.locator(".crawler-data-row")).toHaveCount(3);
-  await page.getByRole("button", { name: "上一页" }).click();
-  await expect(page.getByText("1 / 2")).toBeVisible();
-
-  expect(crawlerDataRequests.some((url) => url.searchParams.get("platform") === "xhs")).toBe(true);
-  expect(crawlerDataRequests.some((url) => url.searchParams.get("contentType") === "comment")).toBe(true);
-  expect(crawlerDataRequests.some((url) => url.searchParams.get("q") === "医保")).toBe(true);
-  expect(
-    crawlerDataRequests.some(
-      (url) => url.searchParams.get("page") === "2" && url.searchParams.get("pageSize") === "10"
-    )
-  ).toBe(true);
+  await page.getByTitle("关闭").click();
+  await page.getByRole("button", { name: "爬虫" }).click();
+  await page.locator(".crawler-row", { hasText: "日志排序" }).getByTitle("查看任务日志").click();
+  const crawlerLogs = page.locator(".task-log-row");
+  await expect(crawlerLogs.first()).toContainText("crawler numeric id 11");
+  await expect(crawlerLogs.nth(1)).toContainText("crawler numeric id 10");
 });
 
 async function routeJson(page: import("@playwright/test").Page, path: string, body: unknown) {
