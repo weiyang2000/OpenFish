@@ -88,6 +88,11 @@ import type {
 } from "@/lib/types";
 
 type Section = "dashboard" | "reports" | "crawlers" | "crawlerData" | "platforms" | "config" | "logs";
+type CrawlerDataFilters = {
+  platform: PlatformId | "all";
+  contentType: "content" | "comment" | "all";
+  q: string;
+};
 
 const currentUser = {
   userId: "user_demo",
@@ -437,11 +442,7 @@ export function ConsoleShell() {
   const [crawlerDataPage, setCrawlerDataPage] = useState(1);
   const [crawlerDataPageSize, setCrawlerDataPageSize] = useState(20);
   const [selectedCrawlerDataRecords, setSelectedCrawlerDataRecords] = useState<Record<string, CrawlerDataRecord>>({});
-  const [crawlerDataFilters, setCrawlerDataFilters] = useState<{
-    platform: PlatformId | "all";
-    contentType: "content" | "comment" | "all";
-    q: string;
-  }>({
+  const [crawlerDataFilters, setCrawlerDataFilters] = useState<CrawlerDataFilters>({
     platform: "all",
     contentType: "all",
     q: ""
@@ -697,12 +698,16 @@ export function ConsoleShell() {
       }
     });
 
-  async function loadCrawlerData(page = crawlerDataPage, pageSize = crawlerDataPageSize) {
+  async function loadCrawlerData(
+    page = crawlerDataPage,
+    pageSize = crawlerDataPageSize,
+    filters: CrawlerDataFilters = crawlerDataFilters
+  ) {
     setCrawlerDataLoading(true);
     try {
       const dataPage = await listCrawlerData({
-        ...crawlerDataFilters,
-        q: crawlerDataFilters.q.trim(),
+        ...filters,
+        q: filters.q.trim(),
         page,
         pageSize
       });
@@ -715,6 +720,14 @@ export function ConsoleShell() {
       setCrawlerDataLoading(false);
     }
   }
+
+  const selectCrawlerDataPlatform = (platform: PlatformId | "all") => {
+    const nextFilters = { ...crawlerDataFilters, platform };
+    setCrawlerDataFilters(nextFilters);
+    setCrawlerDataPage(1);
+    setSelectedCrawlerDataRecords({});
+    void loadCrawlerData(1, crawlerDataPageSize, nextFilters);
+  };
 
   const searchCrawlerData = () => {
     setSelectedCrawlerDataRecords({});
@@ -1680,28 +1693,35 @@ export function ConsoleShell() {
                 </div>
               }
             />
-            <div className="data-filters">
-              <label className="field">
-                <span>平台</span>
-                <select
-                  value={crawlerDataFilters.platform}
-                  onChange={(event) => {
-                    setCrawlerDataPage(1);
-                    setSelectedCrawlerDataRecords({});
-                    setCrawlerDataFilters({
-                      ...crawlerDataFilters,
-                      platform: event.target.value === "all" ? "all" : (event.target.value as PlatformId)
-                    });
-                  }}
+            <div className="crawler-data-platform-tabs" role="tablist" aria-label="爬取数据平台筛选">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={crawlerDataFilters.platform === "all"}
+                className={classNames("crawler-data-platform-tab", crawlerDataFilters.platform === "all" && "active")}
+                onClick={() => selectCrawlerDataPlatform("all")}
+                disabled={crawlerDataLoading}
+              >
+                全部平台
+              </button>
+              {snapshot.platforms.map((platform) => (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={crawlerDataFilters.platform === platform.id}
+                  className={classNames(
+                    "crawler-data-platform-tab",
+                    crawlerDataFilters.platform === platform.id && "active"
+                  )}
+                  key={platform.id}
+                  onClick={() => selectCrawlerDataPlatform(platform.id)}
+                  disabled={crawlerDataLoading}
                 >
-                  <option value="all">全部平台</option>
-                  {snapshot.platforms.map((platform) => (
-                    <option key={platform.id} value={platform.id}>
-                      {platform.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  {platform.name}
+                </button>
+              ))}
+            </div>
+            <div className="data-filters">
               <label className="field">
                 <span>类型</span>
                 <select
@@ -1837,6 +1857,9 @@ export function ConsoleShell() {
                     <div className="crawler-data-main">
                       <div className="crawler-data-title">
                         <strong>{record.title || record.sourceId}</strong>
+                        {record.keyword ? (
+                          <span className="crawler-data-keyword-marker">{record.keyword}</span>
+                        ) : null}
                         <Badge className="crawler-data-type-badge" variant="idle">
                           {crawlerDataTypeLabels[record.contentType]}
                         </Badge>
@@ -1844,8 +1867,6 @@ export function ConsoleShell() {
                       </div>
                       <p>{record.textSnippet || "无正文摘要"}</p>
                       <div className="crawler-data-meta">
-                        <span>{platformNames[record.platformId]}</span>
-                        {record.keyword && <span>{record.keyword}</span>}
                         {record.author && <span>{record.author}</span>}
                       </div>
                     </div>
