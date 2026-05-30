@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "BettaFish SaaS Console",
-  description: "Contract-first SaaS console for BettaFish engines, crawlers, and reports",
+  title: "知潮 SaaS Console",
+  description: "面向知潮引擎、爬虫与报告的 SaaS 控制台",
   icons: {
     icon: "/icon.svg"
   }

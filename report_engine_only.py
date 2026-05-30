@@ -32,6 +32,11 @@ from loguru import logger
 
 # 全局配置
 VERBOSE = False
+ENGINE_DISPLAY_NAMES = {
+    "insight": "知微",
+    "media": "听潮",
+    "query": "问潮",
+}
 
 # 配置日志
 def setup_logger(verbose: bool = False):
@@ -97,15 +102,16 @@ def get_latest_engine_reports() -> Dict[str, str]:
     latest_files = {}
 
     for engine, directory in directories.items():
+        engine_name = ENGINE_DISPLAY_NAMES.get(engine, engine)
         if not os.path.exists(directory):
-            logger.warning(f"⚠ {engine.capitalize()} Engine 目录不存在: {directory}")
+            logger.warning(f"⚠ {engine_name} 目录不存在: {directory}")
             continue
 
         # 获取所有 .md 文件
         md_files = [f for f in os.listdir(directory) if f.endswith('.md')]
 
         if not md_files:
-            logger.warning(f"⚠ {engine.capitalize()} Engine 目录中没有找到 .md 文件")
+            logger.warning(f"⚠ {engine_name} 目录中没有找到 .md 文件")
             continue
 
         # 获取最新文件
@@ -116,7 +122,7 @@ def get_latest_engine_reports() -> Dict[str, str]:
         latest_path = os.path.join(directory, latest_file)
         latest_files[engine] = latest_path
 
-        logger.info(f"✓ 找到 {engine.capitalize()} Engine 最新报告")
+        logger.info(f"✓ 找到 {engine_name} 最新报告")
 
     if not latest_files:
         logger.error("❌ 未找到任何引擎报告文件，请先运行分析引擎生成报告")
@@ -142,12 +148,13 @@ def confirm_file_selection(latest_files: Dict[str, str]) -> bool:
     logger.info("=" * 70)
 
     for engine, file_path in latest_files.items():
+        engine_name = ENGINE_DISPLAY_NAMES.get(engine, engine)
         filename = os.path.basename(file_path)
         # 获取文件修改时间
         mtime = os.path.getmtime(file_path)
         mtime_str = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
 
-        logger.info(f"  {engine.capitalize()} Engine:")
+        logger.info(f"  {engine_name}:")
         logger.info(f"    文件名: {filename}")
         logger.info(f"    路径: {file_path}")
         logger.info(f"    修改时间: {mtime_str}")

@@ -57,7 +57,7 @@ test("opens every primary SaaS console section", async ({ page }) => {
 
   await expect(page.getByText("Mock adapter")).toBeVisible();
   await expect(page.getByRole("heading", { name: "运行总览" })).toBeVisible();
-  await expect(page.getByText("Query Engine")).toBeVisible();
+  await expect(page.getByText("问潮")).toBeVisible();
   await expect(page.getByText(":5432")).toHaveCount(0);
 
   for (const [nav, heading] of [
@@ -82,28 +82,28 @@ test("validates and creates a report task", async ({ page }) => {
 
   await expect(page.getByLabel("模板")).toHaveValue("auto");
   await expect(page.getByRole("option", { name: "自动选择" })).toBeAttached();
-  await expect(page.getByLabel("Query Engine")).toBeChecked();
-  await expect(page.getByLabel("Media Engine")).toBeChecked();
-  await expect(page.getByLabel("Insight Engine")).toBeChecked();
+  await expect(page.getByLabel("问潮")).toBeChecked();
+  await expect(page.getByLabel("听潮")).toBeChecked();
+  await expect(page.getByLabel("知微")).toBeChecked();
   await expect(page.getByRole("radio", { name: "Normal" })).toBeChecked();
   await page.getByRole("radio", { name: "Deep" }).check();
 
   await page.getByPlaceholder("输入报告主题").fill("BET-5 前端报告任务");
-  await page.getByLabel("Query Engine").uncheck();
-  await page.getByLabel("Media Engine").uncheck();
-  await page.getByLabel("Insight Engine").uncheck();
+  await page.getByLabel("问潮").uncheck();
+  await page.getByLabel("听潮").uncheck();
+  await page.getByLabel("知微").uncheck();
   await expect(page.getByRole("radio", { name: "Deep" })).toBeDisabled();
   await page.getByRole("button", { name: "创建报告" }).click();
   await expect(page.getByText("至少选择一个分析引擎")).toBeVisible();
 
-  await page.getByLabel("Insight Engine").check();
+  await page.getByLabel("知微").check();
   await expect(page.getByRole("radio", { name: "Deep" })).toBeEnabled();
   await expect(page.getByRole("radio", { name: "Deep" })).toBeChecked();
   await page.getByRole("button", { name: "创建报告" }).click();
 
   await expect(page.getByText("报告任务已创建")).toBeVisible();
   await expect(page.getByText("BET-5 前端报告任务")).toBeVisible();
-  await expect(page.locator(".task-row", { hasText: "BET-5 前端报告任务" })).toContainText("Insight Engine");
+  await expect(page.locator(".task-row", { hasText: "BET-5 前端报告任务" })).toContainText("知微");
   await expect(page.locator(".task-row", { hasText: "BET-5 前端报告任务" })).toContainText("Insight Deep");
 });
 
@@ -112,7 +112,7 @@ test("validates crawler platform selection and creates a crawler task", async ({
   await page.getByRole("button", { name: "爬虫" }).click();
 
   await expect(page.getByRole("heading", { name: "爬虫账号" })).toBeVisible();
-  await expect(page.getByText("BettaFish 运营号")).toBeVisible();
+  await expect(page.getByText("知潮 运营号")).toBeVisible();
   await expect(page.getByText("研究采集号")).toBeVisible();
 
   await page.getByLabel("微博").uncheck();
@@ -173,7 +173,7 @@ test("filters crawler accounts by platform and status with empty state", async (
   await page.getByLabel("账号平台筛选").selectOption("xhs");
   await expect(page.getByText("1 / 3 个账号")).toBeVisible();
   await expect(page.getByText("研究采集号")).toBeVisible();
-  await expect(page.getByText("BettaFish 运营号")).toHaveCount(0);
+  await expect(page.getByText("知潮 运营号")).toHaveCount(0);
 
   await page.getByLabel("账号状态筛选").selectOption("active");
   await expect(page.getByText("暂无爬虫账号")).toBeVisible();
@@ -187,9 +187,9 @@ test("deletes crawler accounts", async ({ page }) => {
   await openConsole(page);
   await page.getByRole("button", { name: "爬虫" }).click();
 
-  await page.locator(".account-row", { hasText: "BettaFish 运营号" }).getByTitle("删除爬虫账号").click();
+  await page.locator(".account-row", { hasText: "知潮 运营号" }).getByTitle("删除爬虫账号").click();
   await expect(page.getByText("爬虫账号已删除")).toBeVisible();
-  await expect(page.locator(".account-row", { hasText: "BettaFish 运营号" })).toHaveCount(0);
+  await expect(page.locator(".account-row", { hasText: "知潮 运营号" })).toHaveCount(0);
   await expect(page.getByText("2 / 2 个账号")).toBeVisible();
 });
 

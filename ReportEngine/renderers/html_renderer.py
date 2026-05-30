@@ -3456,15 +3456,15 @@ class HTMLRenderer:
   --card-bg: {card}; /* 含义：卡片/容器背景色；设置：在 themeTokens 中覆盖或改此默认值 */
   --border-color: {border}; /* 含义：常规边框色；设置：在 themeTokens 中覆盖或改此默认值 */
   --shadow-color: {shadow}; /* 含义：阴影基色；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-insight-bg: #f4f7ff; /* 含义：Insight 引擎卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-insight-border: #dce7ff; /* 含义：Insight 引擎边框；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-insight-text: #1f4b99; /* 含义：Insight 引擎文字色；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-media-bg: #fff6ec; /* 含义：Media 引擎卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-media-border: #ffd9b3; /* 含义：Media 引擎边框；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-media-text: #b65a1a; /* 含义：Media 引擎文字色；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-query-bg: #f1fbf5; /* 含义：Query 引擎卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-query-border: #c7ebd6; /* 含义：Query 引擎边框；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-query-text: #1d6b3f; /* 含义：Query 引擎文字色；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-insight-bg: #f4f7ff; /* 含义：知微卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-insight-border: #dce7ff; /* 含义：知微边框；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-insight-text: #1f4b99; /* 含义：知微文字色；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-media-bg: #fff6ec; /* 含义：听潮卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-media-border: #ffd9b3; /* 含义：听潮边框；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-media-text: #b65a1a; /* 含义：听潮文字色；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-query-bg: #f1fbf5; /* 含义：问潮卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-query-border: #c7ebd6; /* 含义：问潮边框；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-query-text: #1d6b3f; /* 含义：问潮文字色；设置：在 themeTokens 中覆盖或改此默认值 */
   --engine-quote-shadow: 0 12px 30px rgba(0,0,0,0.04); /* 含义：Engine 引用阴影；设置：在 themeTokens 中覆盖或改此默认值 */
   --swot-strength: #1c7f6e; /* 含义：SWOT 优势主色；设置：在 themeTokens 中覆盖或改此默认值 */
   --swot-weakness: #c0392b; /* 含义：SWOT 劣势主色；设置：在 themeTokens 中覆盖或改此默认值 */
@@ -3532,15 +3532,15 @@ class HTMLRenderer:
   --card-bg: #1f1f1f; /* 含义：卡片/容器背景色；设置：在 themeTokens 中覆盖或改此默认值 */
   --border-color: #2c2c2c; /* 含义：常规边框色；设置：在 themeTokens 中覆盖或改此默认值 */
   --shadow-color: rgba(0, 0, 0, 0.4); /* 含义：阴影基色；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-insight-bg: rgba(145, 202, 255, 0.08); /* 含义：Insight 引擎卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-insight-border: rgba(145, 202, 255, 0.45); /* 含义：Insight 引擎边框；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-insight-text: #9dc2ff; /* 含义：Insight 引擎文字色；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-media-bg: rgba(255, 196, 138, 0.08); /* 含义：Media 引擎卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-media-border: rgba(255, 196, 138, 0.45); /* 含义：Media 引擎边框；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-media-text: #ffcb9b; /* 含义：Media 引擎文字色；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-query-bg: rgba(141, 215, 165, 0.08); /* 含义：Query 引擎卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-query-border: rgba(141, 215, 165, 0.45); /* 含义：Query 引擎边框；设置：在 themeTokens 中覆盖或改此默认值 */
-  --engine-query-text: #a7e2ba; /* 含义：Query 引擎文字色；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-insight-bg: rgba(145, 202, 255, 0.08); /* 含义：知微卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-insight-border: rgba(145, 202, 255, 0.45); /* 含义：知微边框；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-insight-text: #9dc2ff; /* 含义：知微文字色；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-media-bg: rgba(255, 196, 138, 0.08); /* 含义：听潮卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-media-border: rgba(255, 196, 138, 0.45); /* 含义：听潮边框；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-media-text: #ffcb9b; /* 含义：听潮文字色；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-query-bg: rgba(141, 215, 165, 0.08); /* 含义：问潮卡片背景；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-query-border: rgba(141, 215, 165, 0.45); /* 含义：问潮边框；设置：在 themeTokens 中覆盖或改此默认值 */
+  --engine-query-text: #a7e2ba; /* 含义：问潮文字色；设置：在 themeTokens 中覆盖或改此默认值 */
   --engine-quote-shadow: 0 12px 28px rgba(0, 0, 0, 0.35); /* 含义：Engine 引用阴影；设置：在 themeTokens 中覆盖或改此默认值 */
   --swot-strength: #1c7f6e; /* 含义：SWOT 优势主色；设置：在 themeTokens 中覆盖或改此默认值 */
   --swot-weakness: #e06754; /* 含义：SWOT 劣势主色；设置：在 themeTokens 中覆盖或改此默认值 */

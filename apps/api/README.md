@@ -31,11 +31,11 @@ artifacts.
 
 Report task orchestration accepts `sourceScope.orchestration.insightMode` with
 `fast`, `normal`, or `deep`. The field defaults to `normal` and is only applied
-when the Insight Engine is selected for the task or rerun.
+when 知微 is selected for the task or rerun.
 
 ## Persistence
 
-SaaS metadata, crawler persistence, crawler-data reads, and Insight Engine
+SaaS metadata, crawler persistence, crawler-data reads, and 知微
 database queries all use the same repo-level database configuration. Set either
 `DATABASE_URL` or `DB_DIALECT`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`,
 and `DB_NAME` in `.env`.

@@ -39,9 +39,9 @@ ENGINE_REPORT_DIRS = {
 }
 REPORT_ORCHESTRATION_ENGINES = ("query", "media", "insight")
 ENGINE_DISPLAY_NAMES = {
-    "query": "Query Engine",
-    "media": "Media Engine",
-    "insight": "Insight Engine",
+    "query": "问潮",
+    "media": "听潮",
+    "insight": "知微",
     "forum": "Forum Engine",
     "report": "Report Engine",
 }

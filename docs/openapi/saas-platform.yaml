@@ -1159,7 +1159,7 @@ components:
       type: string
       enum: [fast, normal, deep]
       default: normal
-      description: Insight Engine generation preset. Ignored by Query/Media/Report when Insight is not selected.
+      description: 知微生成预设。未选择知微时忽略该字段。
 
     ComponentStatus:
       type: string

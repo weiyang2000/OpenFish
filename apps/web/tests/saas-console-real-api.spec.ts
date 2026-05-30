@@ -30,9 +30,9 @@ test("loads and deletes existing identity rules through real API routes", async 
   await routeJson(page, "/system/components", {
     success: true,
     components: [
-      { id: "query", name: "Query Engine", status: "running", port: 9001, lastHeartbeatAt: timestamp },
-      { id: "media", name: "Media Engine", status: "running", port: 9002, lastHeartbeatAt: timestamp },
-      { id: "insight", name: "Insight Engine", status: "degraded", port: 9003, lastHeartbeatAt: timestamp },
+      { id: "query", name: "问潮", status: "running", port: 9001, lastHeartbeatAt: timestamp },
+      { id: "media", name: "听潮", status: "running", port: 9002, lastHeartbeatAt: timestamp },
+      { id: "insight", name: "知微", status: "degraded", port: 9003, lastHeartbeatAt: timestamp },
       { id: "report", name: "Report Engine", status: "running" },
       { id: "mindspider", name: "MindSpider", status: "running" }
     ]
@@ -66,8 +66,8 @@ test("loads and deletes existing identity rules through real API routes", async 
         platformId: "wb",
         accountId: "wb_1088",
         status: "active",
-        username: "bettafish_ops",
-        displayName: "BettaFish 运营号",
+        username: "zhichao_ops",
+        displayName: "知潮 运营号",
         loginType: "qrcode",
         lastCheckedAt: timestamp,
         createdAt: timestamp,
@@ -124,7 +124,7 @@ test("loads and deletes existing identity rules through real API routes", async 
 
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("API connected")).toBeVisible();
-  await expect(page.getByText("Query Engine")).toBeVisible();
+  await expect(page.getByText("问潮")).toBeVisible();
   await expect(page.getByText(/:900[123]/)).toHaveCount(0);
   await page.getByRole("button", { name: "平台规则" }).click();
 
@@ -328,9 +328,9 @@ test("creates report tasks with selected orchestration engines", async ({ page }
   await routeJson(page, "/system/components", {
     success: true,
     components: [
-      { id: "query", name: "Query Engine", status: "running" },
-      { id: "media", name: "Media Engine", status: "running" },
-      { id: "insight", name: "Insight Engine", status: "running" },
+      { id: "query", name: "问潮", status: "running" },
+      { id: "media", name: "听潮", status: "running" },
+      { id: "insight", name: "知微", status: "running" },
       { id: "report", name: "Report Engine", status: "running" }
     ]
   });
@@ -391,7 +391,7 @@ test("creates report tasks with selected orchestration engines", async ({ page }
   await page.getByRole("button", { name: "报告" }).click();
   await page.getByPlaceholder("输入报告主题").fill("多引擎调度验证");
   await page.getByRole("radio", { name: "Fast" }).check();
-  await page.getByLabel("Query Engine").uncheck();
+  await page.getByLabel("问潮").uncheck();
   await page.getByRole("button", { name: "创建报告" }).click();
 
   expect(reportPayload).toMatchObject({
@@ -408,14 +408,14 @@ test("creates report tasks with selected orchestration engines", async ({ page }
   });
   await expect(page.getByText("报告任务已创建")).toBeVisible();
   await expect(page.locator(".task-row", { hasText: "多引擎调度验证" })).toContainText(
-    "Media Engine / Insight Engine"
+    "听潮 / 知微"
   );
   await expect(page.locator(".task-row", { hasText: "多引擎调度验证" })).toContainText("Insight Fast");
 
   reportPayload = undefined;
   await page.getByPlaceholder("输入报告主题").fill("非 Insight 调度验证");
-  await page.getByLabel("Query Engine").check();
-  await page.getByLabel("Insight Engine").uncheck();
+  await page.getByLabel("问潮").check();
+  await page.getByLabel("知微").uncheck();
   await expect(page.getByRole("radio", { name: "Fast" })).toBeDisabled();
   await page.getByRole("button", { name: "创建报告" }).click();
 
@@ -430,7 +430,7 @@ test("creates report tasks with selected orchestration engines", async ({ page }
     }
   });
   await expect(page.locator(".task-row", { hasText: "非 Insight 调度验证" })).toContainText(
-    "Query Engine / Media Engine"
+    "问潮 / 听潮"
   );
   await expect(page.locator(".task-row", { hasText: "非 Insight 调度验证" })).toContainText(
     "Insight Off"

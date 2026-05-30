@@ -130,9 +130,9 @@ const platformNames: Record<PlatformId, string> = {
 };
 
 const reportEngineLabels: Record<ReportEngineId, string> = {
-  query: "Query Engine",
-  media: "Media Engine",
-  insight: "Insight Engine"
+  query: "问潮",
+  media: "听潮",
+  insight: "知微"
 };
 
 const reportEngineOptions = Object.entries(reportEngineLabels) as Array<[ReportEngineId, string]>;
@@ -1039,9 +1039,9 @@ export function ConsoleShell() {
     <div className="console-root">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">BF</div>
+          <div className="brand-mark">知</div>
           <div>
-            <strong>BettaFish</strong>
+            <strong>知潮</strong>
             <span>SaaS Console</span>
           </div>
         </div>

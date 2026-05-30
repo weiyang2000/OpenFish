@@ -63,11 +63,11 @@ class ChapterSanitizationTestCase(unittest.TestCase):
                 {
                     "type": "engineQuote",
                     "engine": "insight",
-                    "title": "Insight Agent",
+                    "title": "知微",
                     "blocks": [
                         {
                             "type": "paragraph",
-                            "inlines": [{"text": "来自 Insight Engine 的观点"}],
+                            "inlines": [{"text": "来自知微的观点"}],
                         }
                     ],
                 }
@@ -88,7 +88,7 @@ class ChapterSanitizationTestCase(unittest.TestCase):
                 {
                     "type": "engineQuote",
                     "engine": "media",
-                    "title": "Media Agent",
+                    "title": "听潮",
                     "blocks": [
                         {"type": "math", "latex": "x=y"},
                         {
@@ -131,7 +131,7 @@ class ChapterSanitizationTestCase(unittest.TestCase):
         node._sanitize_chapter_blocks(chapter)
         eq_block = chapter["blocks"][0]
         self.assertEqual(eq_block["type"], "engineQuote")
-        self.assertEqual(eq_block.get("title"), "Query Agent")
+        self.assertEqual(eq_block.get("title"), "问潮")
         inner_blocks = eq_block.get("blocks")
         self.assertTrue(all(b.get("type") == "paragraph" for b in inner_blocks))
         marks = inner_blocks[0]["inlines"][0].get("marks")
@@ -150,7 +150,7 @@ class ChapterSanitizationTestCase(unittest.TestCase):
                 {
                     "type": "engineQuote",
                     "engine": "query",
-                    "title": "Media Agent",
+                    "title": "听潮",
                     "blocks": [
                         {
                             "type": "paragraph",

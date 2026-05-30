@@ -1,4 +1,4 @@
-# BettaFish SaaS Console
+# 知潮 SaaS Console
 
 Contract-first Next.js console for the SaaS migration work. The UI calls
 `src/lib/openapi-client.ts`, which targets `docs/openapi/saas-platform.yaml`.

@@ -48,9 +48,9 @@ ALLOWED_BLOCK_TYPES: List[str] = [
 ]
 
 ENGINE_AGENT_TITLES: Dict[str, str] = {
-    "insight": "Insight Agent",
-    "media": "Media Agent",
-    "query": "Query Agent",
+    "insight": "知微",
+    "media": "听潮",
+    "query": "问潮",
 }
 
 # ====== Schema定义 ======
