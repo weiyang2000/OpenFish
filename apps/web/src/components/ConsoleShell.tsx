@@ -18,6 +18,7 @@ import {
   ListChecks,
   Loader2,
   LockKeyhole,
+  Maximize2,
   Play,
   Plus,
   RefreshCcw,
@@ -421,6 +422,27 @@ function removeCrawlerAccount(accounts: CrawlerAccount[], accountId: string) {
   return accounts.filter((account) => account.id !== accountId);
 }
 
+function isLoginSessionExpired(session: CrawlerAccountLoginSession): boolean {
+  if (!session.expiresAt) return false;
+  const expiresAt = Date.parse(session.expiresAt);
+  return Number.isFinite(expiresAt) && Date.now() >= expiresAt;
+}
+
+function expireLoginSession(session: CrawlerAccountLoginSession): CrawlerAccountLoginSession {
+  return {
+    ...session,
+    status: "failed",
+    message: "登录会话已过期，请重新发起",
+    error: {
+      code: "LOGIN_SESSION_EXPIRED",
+      message: "登录会话已过期，请重新发起"
+    },
+    loginPreviewImage: null,
+    loginPreviewKind: null,
+    updatedAt: new Date().toISOString()
+  };
+}
+
 export function ConsoleShell() {
   const [activeSection, setActiveSection] = useState<Section>("dashboard");
   const [snapshot, setSnapshot] = useState<ConsoleSnapshot | null>(null);
@@ -440,6 +462,7 @@ export function ConsoleShell() {
     loginType: "qrcode"
   });
   const [accountLoginSession, setAccountLoginSession] = useState<CrawlerAccountLoginSession | null>(null);
+  const [showLoginPreviewZoom, setShowLoginPreviewZoom] = useState(false);
   const [crawlerData, setCrawlerData] = useState<CrawlerDataPage | null>(null);
   const [crawlerDataLoading, setCrawlerDataLoading] = useState(false);
   const [crawlerDataPage, setCrawlerDataPage] = useState(1);
@@ -530,11 +553,26 @@ export function ConsoleShell() {
   }, []);
 
   useEffect(() => {
+    if (!showLoginPreviewZoom) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowLoginPreviewZoom(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showLoginPreviewZoom]);
+
+  useEffect(() => {
     if (!accountLoginSession || ["completed", "failed"].includes(accountLoginSession.status)) return;
     const timer = window.setInterval(() => {
+      if (isLoginSessionExpired(accountLoginSession)) {
+        setAccountLoginSession(expireLoginSession(accountLoginSession));
+        return;
+      }
       void getCrawlerAccountLoginSession(accountLoginSession.id)
         .then((session) => {
-          setAccountLoginSession(session);
+          setAccountLoginSession(isLoginSessionExpired(session) ? expireLoginSession(session) : session);
           if (session.account) {
             setSnapshot((current) =>
               current
@@ -662,7 +700,9 @@ export function ConsoleShell() {
   const allCurrentCrawlerDataSelected =
     currentCrawlerDataKeys.length > 0 && currentCrawlerDataSelectedCount === currentCrawlerDataKeys.length;
   const accountLoginInProgress =
-    accountLoginSession?.status === "opening" || accountLoginSession?.status === "waiting";
+    !!accountLoginSession &&
+    !isLoginSessionExpired(accountLoginSession) &&
+    (accountLoginSession.status === "opening" || accountLoginSession.status === "waiting");
   const reportTemplateOptions = useMemo(() => {
     const templates = snapshot?.reportTemplates ?? [];
     if (templates.some((template) => template.id === AUTO_REPORT_TEMPLATE_ID)) {
@@ -2166,6 +2206,7 @@ export function ConsoleShell() {
                 onClick={() => {
                   setShowAccountModal(false);
                   setAccountLoginSession(null);
+                  setShowLoginPreviewZoom(false);
                 }}
               >
                 <XCircle size={18} />
@@ -2222,10 +2263,20 @@ export function ConsoleShell() {
                 )}
                 {accountLoginSession.loginPreviewImage && accountLoginSession.status !== "completed" && (
                   <div className="login-preview">
-                    <img
-                      src={accountLoginSession.loginPreviewImage}
-                      alt={accountLoginSession.loginPreviewKind === "qrcode" ? "登录二维码" : "登录页预览"}
-                    />
+                    {accountLoginSession.loginPreviewKind === "page" ? (
+                      <button
+                        type="button"
+                        className="login-preview-image-button"
+                        title="放大登录页预览"
+                        aria-label="放大登录页预览"
+                        onClick={() => setShowLoginPreviewZoom(true)}
+                      >
+                        <img src={accountLoginSession.loginPreviewImage} alt="登录页预览" />
+                        <Maximize2 size={18} aria-hidden="true" />
+                      </button>
+                    ) : (
+                      <img src={accountLoginSession.loginPreviewImage} alt="登录二维码" />
+                    )}
                     <span>
                       {accountLoginSession.loginPreviewKind === "qrcode"
                         ? "用对应平台 App 扫码后保持此窗口打开"
@@ -2245,6 +2296,7 @@ export function ConsoleShell() {
                 onClick={() => {
                   setShowAccountModal(false);
                   setAccountLoginSession(null);
+                  setShowLoginPreviewZoom(false);
                 }}
               >
                 关闭
@@ -2339,6 +2391,41 @@ export function ConsoleShell() {
           <span>{busyAction}</span>
         </div>
       )}
+
+      {showLoginPreviewZoom &&
+        accountLoginSession?.loginPreviewKind === "page" &&
+        accountLoginSession.loginPreviewImage &&
+        accountLoginSession.status !== "completed" && (
+          <div
+            className="preview-lightbox-backdrop"
+            role="presentation"
+            onClick={() => setShowLoginPreviewZoom(false)}
+          >
+            <div
+              className="preview-lightbox-panel"
+              role="dialog"
+              aria-modal="true"
+              aria-label="登录页预览大图"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="preview-lightbox-header">
+                <strong>登录页预览</strong>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="icon-button"
+                  title="关闭"
+                  onClick={() => setShowLoginPreviewZoom(false)}
+                >
+                  <XCircle size={18} />
+                </Button>
+              </div>
+              <div className="preview-lightbox-body">
+                <img src={accountLoginSession.loginPreviewImage} alt="登录页预览大图" />
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   );
 }

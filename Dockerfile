@@ -11,6 +11,7 @@ ARG PYPI_EXTRA_INDEX_URLS=
 # Docker build can only auto-detect CUDA when nvidia-smi is visible inside the build container.
 ARG BETTAFISH_TORCH_VARIANT=auto
 ARG PYTORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
+ARG SCRAPLING_INSTALL_BROWSERS=true
 ARG TARGETPLATFORM
 
 # Prevent Python from writing .pyc files, buffer stdout/stderr, and pin common tooling paths
@@ -132,6 +133,19 @@ case "${torch_variant}" in
     exit 2
     ;;
 esac
+BASH
+
+# Scrapling fetchers need browser binaries and browser-side dependencies.
+# Keep this behind a build arg so CI can skip the large download when it only
+# needs API/unit-test surfaces.
+RUN <<'BASH'
+set -euo pipefail
+
+if [ "${SCRAPLING_INSTALL_BROWSERS}" = "true" ]; then
+  scrapling install
+else
+  echo "Skipping Scrapling browser installation because SCRAPLING_INSTALL_BROWSERS=${SCRAPLING_INSTALL_BROWSERS}."
+fi
 BASH
 
 # Copy the real runtime environment file into the image.

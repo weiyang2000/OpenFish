@@ -43,6 +43,7 @@ cryptography==42.0.7
 
 # ===== 爬虫相关 =====
 cloakbrowser>=0.3.30
+scrapling[fetchers]==0.4.8; python_version >= "3.10"
 Pillow==9.5.0
 opencv-python>=4.8.0
 beautifulsoup4>=4.12.0

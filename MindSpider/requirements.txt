@@ -38,6 +38,7 @@ pytz
 # ===============================
 Pillow>=10.0.0,<11  # Pillow 11 compatibility has not been validated with this crawler stack
 cloakbrowser>=0.3.30
+scrapling[fetchers]==0.4.8; python_version >= "3.10"
 tenacity==8.2.2
 opencv-python
 redis~=4.6.0

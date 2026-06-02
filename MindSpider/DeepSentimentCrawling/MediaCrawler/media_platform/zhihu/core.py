@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 import config
 from constant import zhihu as constant
 from base.base_crawler import AbstractCrawler
+from media_platform.scrapling_bridge import should_use_scrapling_engine
 from model.m_zhihu import ZhihuContent, ZhihuCreator
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import zhihu as zhihu_store
@@ -53,6 +54,27 @@ class ZhihuCrawler(AbstractCrawler):
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
 
     async def start(self) -> None:
+        if not should_use_scrapling_engine("zhihu"):
+            await self._start_legacy()
+            return
+
+        await self._start_scrapling_spider()
+
+    async def _start_scrapling_spider(self) -> None:
+        from .scrapling_spider import run_scrapling_zhihu_crawler
+
+        if config.ENABLE_IP_PROXY:
+            raise RuntimeError(
+                "Zhihu Scrapling spider does not yet support MediaCrawler IP proxy pool. "
+                "Disable ENABLE_IP_PROXY or explicitly use "
+                "CRAWLER_ENGINE=legacy."
+            )
+
+        utils.logger.info("[ZhihuCrawler.start] Starting Zhihu Scrapling spider pilot")
+        await run_scrapling_zhihu_crawler()
+        utils.logger.info("[ZhihuCrawler.start] Zhihu Scrapling spider finished ...")
+
+    async def _start_legacy(self) -> None:
         """
         Start the crawler
         Returns:
@@ -116,7 +138,7 @@ class ZhihuCrawler(AbstractCrawler):
         else:
             pass
 
-        utils.logger.info("[ZhihuCrawler.start] Zhihu Crawler finished ...")
+        utils.logger.info("[ZhihuCrawler.start] Zhihu legacy crawler finished ...")
 
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
@@ -415,5 +437,7 @@ class ZhihuCrawler(AbstractCrawler):
 
     async def close(self):
         """Close browser context"""
-        await self.browser_context.close()
-        utils.logger.info("[ZhihuCrawler.close] Browser context closed ...")
+        browser_context = getattr(self, "browser_context", None)
+        if browser_context:
+            await browser_context.close()
+            utils.logger.info("[ZhihuCrawler.close] Browser context closed ...")

@@ -26,6 +26,7 @@ from tenacity import RetryError
 import config
 from base.base_crawler import AbstractCrawler
 from config import CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES
+from media_platform.scrapling_bridge import should_use_scrapling_engine
 from model.m_xiaohongshu import NoteUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import xhs as xhs_store
@@ -52,6 +53,18 @@ class XiaoHongShuCrawler(AbstractCrawler):
         self.ip_proxy_pool = None  # Proxy IP pool for automatic proxy refresh
 
     async def start(self) -> None:
+        if not should_use_scrapling_engine("xhs"):
+            await self._start_legacy()
+            return
+
+        await self._start_scrapling_spider()
+
+    async def _start_scrapling_spider(self) -> None:
+        from .scrapling_spider import run_scrapling_xhs_crawler
+
+        await run_scrapling_xhs_crawler()
+
+    async def _start_legacy(self) -> None:
         browser_proxy_format, httpx_proxy_format = None, None
         if config.ENABLE_IP_PROXY:
             self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
@@ -373,8 +386,10 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def close(self):
         """Close browser context"""
-        await self.browser_context.close()
-        utils.logger.info("[XiaoHongShuCrawler.close] Browser context closed ...")
+        browser_context = getattr(self, "browser_context", None)
+        if browser_context:
+            await browser_context.close()
+            utils.logger.info("[XiaoHongShuCrawler.close] Browser context closed ...")
 
     async def get_notice_media(self, note_detail: Dict):
         if not config.ENABLE_GET_MEIDAS:

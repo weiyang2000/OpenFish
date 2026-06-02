@@ -2074,7 +2074,7 @@ components:
               type: integer
             loginPreviewImage:
               type: string
-              description: Data URL image preview of the QR code or login page.
+              description: Data URL image preview of the QR code or zoomable login page screenshot.
             loginPreviewKind:
               type: string
               enum: [qrcode, page]

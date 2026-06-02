@@ -747,14 +747,78 @@ test("shows real API task logs newest first after open and refresh", async ({ pa
   await expect(crawlerLogs.nth(1)).toContainText("crawler numeric id 10");
 });
 
-async function routeJson(page: import("@playwright/test").Page, path: string, body: unknown) {
-  await page.route(`${apiBase}${path}`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(body)
-    });
+test("enlarges crawler login page preview when qrcode is missing", async ({ page }) => {
+  const pagePreviewImage =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+  const pagePreviewSession = {
+    id: "login_page_preview",
+    workspaceId: "workspace_demo",
+    platformId: "wb",
+    loginType: "qrcode",
+    status: "waiting",
+    loginUrl: "https://passport.weibo.com/sso/signin?entry=miniblog&source=miniblog",
+    message: "登录页已打开，暂未捕获到二维码预览",
+    loginPreviewImage: pagePreviewImage,
+    loginPreviewKind: "page",
+    loginPreviewUpdatedAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    expiresAt: "2026-05-22T10:05:00Z"
+  };
+
+  await routeJson(page, "/system/components", {
+    success: true,
+    components: [
+      { id: "query", name: "问潮", status: "running" },
+      { id: "media", name: "听潮", status: "running" },
+      { id: "insight", name: "知微", status: "running" },
+      { id: "report", name: "Report Engine", status: "running" },
+      { id: "mindspider", name: "MindSpider", status: "running" }
+    ]
   });
+  await routeJson(page, "/report-templates", { success: true, templates: [] });
+  await routeJson(page, "/report-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/crawler-tasks", { success: true, tasks: [] });
+  await routeJson(page, "/crawler-strategies", { success: true, strategies: [] });
+  await routeJson(page, "/crawler-accounts", { success: true, accounts: [] });
+  await routeJson(page, "/platforms", {
+    success: true,
+    platforms: [platform("wb", "微博", { allow: 0, block: 0 })]
+  });
+  await routeJson(page, "/platforms/wb/identity-lists", { success: true, rules: [] });
+  await routeJson(page, "/system/config", { success: true, fields: [] });
+  await routeJson(page, "/logs?tail=300", { success: true, lines: [] });
+  await routeJson(page, "/crawler-accounts/login-sessions", { success: true, session: pagePreviewSession });
+  await routeJson(page, "/crawler-accounts/login-sessions/login_page_preview", {
+    success: true,
+    session: pagePreviewSession
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "爬虫" }).click();
+  await page.getByRole("button", { name: "增加账号" }).click();
+  await page.getByRole("button", { name: "打开登录页" }).click();
+
+  await expect(page.getByText("未定位到二维码，已显示当前登录页预览")).toBeVisible();
+  await page.getByRole("button", { name: "放大登录页预览" }).click();
+  await expect(page.getByRole("dialog", { name: "登录页预览大图" })).toBeVisible();
+  await expect(page.getByAltText("登录页预览大图")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "登录页预览大图" })).toHaveCount(0);
+});
+
+async function routeJson(page: import("@playwright/test").Page, path: string, body: unknown) {
+  await page.route(
+    (url) => url.toString() === `${apiBase}${path}` || `${url.pathname}${url.search}` === `/api/v1${path}`,
+    async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(body)
+      });
+    }
+  );
 }
 
 type TestPlatformId = "wb" | "xhs";

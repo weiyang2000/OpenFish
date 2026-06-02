@@ -42,6 +42,23 @@ from var import crawler_type_var
 from tools.async_file_writer import AsyncFileWriter
 from database.mongodb_store_base import MongoDBStoreBase
 
+def _coerce_zhihu_content_for_db(content_item: Dict) -> Dict:
+    result = content_item.copy()
+    for field_name in ("created_time", "updated_time"):
+        value = result.get(field_name)
+        if value is not None:
+            result[field_name] = str(value)
+    return result
+
+
+def _coerce_zhihu_comment_for_db(comment_item: Dict) -> Dict:
+    result = comment_item.copy()
+    value = result.get("publish_time")
+    if value is not None:
+        result["publish_time"] = str(value)
+    return result
+
+
 def calculate_number_of_files(file_store_path: str) -> int:
     """Calculate the prefix sorting number for data save files, supporting writing to different files for each run
     Args:
@@ -103,6 +120,7 @@ class ZhihuDbStoreImplement(AbstractStore):
         Args:
             content_item: content item dict
         """
+        content_item = _coerce_zhihu_content_for_db(content_item)
         content_id = content_item.get("content_id")
         async with get_session() as session:
             stmt = select(ZhihuContent).where(ZhihuContent.content_id == content_id)
@@ -123,6 +141,7 @@ class ZhihuDbStoreImplement(AbstractStore):
         Args:
             comment_item: comment item dict
         """
+        comment_item = _coerce_zhihu_comment_for_db(comment_item)
         comment_id = comment_item.get("comment_id")
         async with get_session() as session:
             stmt = select(ZhihuComment).where(ZhihuComment.comment_id == comment_id)

@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from base.base_crawler import AbstractCrawler
+from media_platform.scrapling_bridge import should_use_scrapling_engine
 from model.m_baidu_tieba import TiebaCreator, TiebaNote
 from proxy.proxy_ip_pool import IpInfoModel, ProxyIpPool, create_ip_pool
 from store import tieba as tieba_store
@@ -48,6 +49,18 @@ class TieBaCrawler(AbstractCrawler):
         self._page_extractor = TieBaExtractor()
 
     async def start(self) -> None:
+        if not should_use_scrapling_engine("tieba"):
+            await self._start_legacy()
+            return
+
+        await self._start_scrapling_spider()
+
+    async def _start_scrapling_spider(self) -> None:
+        from .scrapling_spider import run_scrapling_tieba_crawler
+
+        await run_scrapling_tieba_crawler()
+
+    async def _start_legacy(self) -> None:
         """
         Start the crawler
         Returns:
@@ -609,5 +622,7 @@ class TieBaCrawler(AbstractCrawler):
         Returns:
 
         """
-        await self.browser_context.close()
-        utils.logger.info("[BaiduTieBaCrawler.close] Browser context closed ...")
+        browser_context = getattr(self, "browser_context", None)
+        if browser_context:
+            await browser_context.close()
+            utils.logger.info("[BaiduTieBaCrawler.close] Browser context closed ...")

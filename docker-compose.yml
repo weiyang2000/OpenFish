@@ -9,6 +9,7 @@ services:
         PYPI_EXTRA_INDEX_URLS: ${PYPI_EXTRA_INDEX_URLS:-}
         BETTAFISH_TORCH_VARIANT: ${BETTAFISH_TORCH_VARIANT:-auto}
         PYTORCH_CUDA_INDEX_URL: ${PYTORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu128}
+        SCRAPLING_INSTALL_BROWSERS: ${SCRAPLING_INSTALL_BROWSERS:-true}
     container_name: bettafish-api
     restart: unless-stopped
     depends_on:
@@ -21,6 +22,7 @@ services:
       - BETTAFISH_API_CRAWLER_ADAPTER=${BETTAFISH_API_CRAWLER_ADAPTER:-real}
       - BETTAFISH_API_CORS_ORIGINS=${BETTAFISH_API_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000}
       - BETTAFISH_CRAWLER_BROWSER_DATA_DIR=${BETTAFISH_CRAWLER_BROWSER_DATA_DIR:-/app/data/browser_data}
+      - CRAWLER_ENGINE=${CRAWLER_ENGINE:-scrapling}
       - DISPLAY=${DISPLAY:-}
       - DATABASE_URL=${DATABASE_URL:-}
       - DB_DIALECT=${DB_DIALECT:-postgresql}

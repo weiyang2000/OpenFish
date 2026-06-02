@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from base.base_crawler import AbstractCrawler
+from media_platform.scrapling_bridge import should_use_scrapling_engine
 from model.m_kuaishou import VideoUrlInfo, CreatorUrlInfo
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import kuaishou as kuaishou_store
@@ -50,6 +51,18 @@ class KuaishouCrawler(AbstractCrawler):
         self.ip_proxy_pool = None  # Proxy IP pool, used for automatic proxy refresh
 
     async def start(self):
+        if not should_use_scrapling_engine("ks"):
+            await self._start_legacy()
+            return
+
+        await self._start_scrapling_spider()
+
+    async def _start_scrapling_spider(self) -> None:
+        from .scrapling_spider import run_scrapling_kuaishou_crawler
+
+        await run_scrapling_kuaishou_crawler()
+
+    async def _start_legacy(self):
         browser_proxy_format, httpx_proxy_format = None, None
         if config.ENABLE_IP_PROXY:
             self.ip_proxy_pool = await create_ip_pool(
@@ -369,5 +382,7 @@ class KuaishouCrawler(AbstractCrawler):
 
     async def close(self):
         """Close browser context"""
-        await self.browser_context.close()
-        utils.logger.info("[KuaishouCrawler.close] Browser context closed ...")
+        browser_context = getattr(self, "browser_context", None)
+        if browser_context:
+            await browser_context.close()
+            utils.logger.info("[KuaishouCrawler.close] Browser context closed ...")

@@ -320,9 +320,12 @@ class AccountService:
     def get_login_session(self, workspace_id: str, session_id: str) -> dict[str, Any]:
         with self._login_lock:
             session = self._login_sessions.get(session_id)
-        if not session or session["workspaceId"] != workspace_id:
-            raise ApiError("NOT_FOUND", "Crawler account login session not found", status_code=404)
-        return self._public_login_session(session)
+            if not session or session["workspaceId"] != workspace_id:
+                raise ApiError("NOT_FOUND", "Crawler account login session not found", status_code=404)
+            if session.get("status") in {"opening", "waiting"} and self._session_is_expired(session):
+                self._expire_login_session_locked(session)
+            public_session = self._public_login_session(session)
+        return public_session
 
     def _run_login_session(
         self,
@@ -475,6 +478,18 @@ class AccountService:
             return False
         return datetime.now(timezone.utc) >= expires
 
+    @staticmethod
+    def _expire_login_session_locked(session: dict[str, Any]) -> None:
+        message = "登录会话已过期，请重新发起"
+        session.update(
+            status="failed",
+            message=message,
+            error={"code": "LOGIN_SESSION_EXPIRED", "message": message},
+            loginPreviewImage=None,
+            loginPreviewKind=None,
+            updatedAt=utc_now(),
+        )
+
     def _profile_lock(self, platform_id: str) -> threading.Lock:
         with self._login_lock:
             lock = self._profile_locks.get(platform_id)
@@ -589,9 +604,14 @@ class AccountService:
     async def _publish_login_preview(self, session_id: str, page: Any, platform_id: str) -> None:
         preview = await self._capture_login_preview(page, platform_id)
         if preview:
+            message = (
+                "请用手机扫码完成登录"
+                if preview["kind"] == "qrcode"
+                else "登录页已打开，暂未捕获到二维码预览"
+            )
             self._update_login_session(
                 session_id,
-                message="请用手机扫码完成登录",
+                message=message,
                 loginPreviewImage=preview["image"],
                 loginPreviewKind=preview["kind"],
                 loginPreviewUpdatedAt=utc_now(),

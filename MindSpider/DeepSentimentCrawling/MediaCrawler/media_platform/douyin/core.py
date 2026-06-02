@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from base.base_crawler import AbstractCrawler
+from media_platform.scrapling_bridge import should_use_scrapling_engine
 from proxy.proxy_ip_pool import IpInfoModel, create_ip_pool
 from store import douyin as douyin_store
 from tools import date_filter, utils
@@ -47,6 +48,18 @@ class DouYinCrawler(AbstractCrawler):
         self.ip_proxy_pool = None  # 代理IP池，用于代理自动刷新
 
     async def start(self) -> None:
+        if not should_use_scrapling_engine("dy"):
+            await self._start_legacy()
+            return
+
+        await self._start_scrapling_spider()
+
+    async def _start_scrapling_spider(self) -> None:
+        from .scrapling_spider import run_scrapling_douyin_crawler
+
+        await run_scrapling_douyin_crawler()
+
+    async def _start_legacy(self) -> None:
         browser_proxy_format, httpx_proxy_format = None, None
         if config.ENABLE_IP_PROXY:
             self.ip_proxy_pool = await create_ip_pool(config.IP_PROXY_POOL_COUNT, enable_validate_ip=True)
@@ -310,8 +323,10 @@ class DouYinCrawler(AbstractCrawler):
 
     async def close(self) -> None:
         """Close browser context"""
-        await self.browser_context.close()
-        utils.logger.info("[DouYinCrawler.close] Browser context closed ...")
+        browser_context = getattr(self, "browser_context", None)
+        if browser_context:
+            await browser_context.close()
+            utils.logger.info("[DouYinCrawler.close] Browser context closed ...")
 
     async def get_aweme_media(self, aweme_item: Dict):
         """

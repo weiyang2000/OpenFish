@@ -342,6 +342,33 @@ def test_crawler_account_login_session_replaces_active_platform_session(
     assert set(service._login_sessions) == {"login_active", session["id"]}
 
 
+def test_expired_crawler_account_login_session_is_reported_failed(client: TestClient):
+    service: AccountService = client.app.state.account_service
+    session_id = "login_expired"
+    service._login_sessions[session_id] = {
+        "id": session_id,
+        "workspaceId": WORKSPACE_HEADERS["X-Workspace-Id"],
+        "platformId": "wb",
+        "loginType": "qrcode",
+        "status": "opening",
+        "loginUrl": "https://passport.weibo.com/sso/signin?entry=miniblog&source=miniblog",
+        "createdAt": "2026-05-24T00:00:00Z",
+        "updatedAt": "2026-05-24T00:00:00Z",
+        "expiresAt": "2020-01-01T00:00:00Z",
+        "message": "正在打开登录页面",
+        "loginPreviewImage": "data:image/png;base64,old",
+        "loginPreviewKind": "page",
+    }
+
+    session = service.get_login_session(WORKSPACE_HEADERS["X-Workspace-Id"], session_id)
+
+    assert session["status"] == "failed"
+    assert session["message"] == "登录会话已过期，请重新发起"
+    assert session["error"]["code"] == "LOGIN_SESSION_EXPIRED"
+    assert session["loginPreviewImage"] is None
+    assert session["loginPreviewKind"] is None
+
+
 def test_crawler_account_login_session_reports_profile_lock_without_raw_browser_log(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -498,6 +525,61 @@ def test_headless_login_session_publishes_qrcode_preview(
     assert account["platformId"] == "wb"
     assert session["loginPreviewImage"] == "data:image/png;base64,cXItaW1hZ2U="
     assert session["loginPreviewKind"] == "qrcode"
+
+
+def test_headless_login_session_publishes_page_preview_when_qrcode_missing(client: TestClient):
+    calls: dict[str, Any] = {"selectors": []}
+
+    class MissingLocator:
+        def __init__(self, selector: str):
+            self.selector = selector
+
+        def nth(self, index: int) -> "MissingLocator":
+            calls["nth"] = index
+            return self
+
+        async def wait_for(self, **_: Any) -> None:
+            calls["selectors"].append(self.selector)
+            raise TimeoutError("qrcode selector missing")
+
+    class FakePage:
+        def locator(self, selector: str) -> MissingLocator:
+            return MissingLocator(selector)
+
+        async def wait_for_timeout(self, timeout: int) -> None:
+            calls["wait_for_timeout"] = timeout
+
+        async def screenshot(self, **kwargs: Any) -> bytes:
+            calls["page_screenshot_kwargs"] = kwargs
+            return b"page-image"
+
+    service: AccountService = client.app.state.account_service
+    session_id = "login_page_preview"
+    service._login_sessions[session_id] = {
+        "id": session_id,
+        "workspaceId": WORKSPACE_HEADERS["X-Workspace-Id"],
+        "platformId": "wb",
+        "loginType": "qrcode",
+        "status": "waiting",
+        "loginUrl": "https://passport.weibo.com/sso/signin?entry=miniblog&source=miniblog",
+        "createdAt": "2026-05-24T00:00:00Z",
+        "updatedAt": "2026-05-24T00:00:00Z",
+    }
+
+    asyncio.run(service._publish_login_preview(session_id, FakePage(), "wb"))
+    session = service.get_login_session(WORKSPACE_HEADERS["X-Workspace-Id"], session_id)
+
+    assert calls["selectors"][0] == "xpath=//img[@class='w-full h-full']"
+    assert calls["page_screenshot_kwargs"] == {
+        "type": "jpeg",
+        "quality": 70,
+        "full_page": False,
+        "timeout": 3_000,
+    }
+    assert session["message"] == "登录页已打开，暂未捕获到二维码预览"
+    assert session["loginPreviewImage"] == "data:image/jpeg;base64,cGFnZS1pbWFnZQ=="
+    assert session["loginPreviewKind"] == "page"
+    assert "loginPreviewUpdatedAt" in session
 
 
 def test_login_state_markers_do_not_accept_visitor_cookies():
