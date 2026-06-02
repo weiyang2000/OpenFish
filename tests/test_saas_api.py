@@ -275,7 +275,7 @@ def test_crawler_account_login_session_persists_account_without_returning_creden
             payload.platformId,
             payload.loginType,
             session_id,
-            self._profile_dir(payload.platformId),
+            self._login_session_profile_dir(payload.platformId, session_id),
             {"SUB": "secret-session-value", "SUBP": "secret-profile-value"},
         )
         self._update_login_session(
@@ -298,6 +298,8 @@ def test_crawler_account_login_session_persists_account_without_returning_creden
     session = _wait_for_login_session(client, session_id)
     assert session["status"] == "completed"
     assert session["account"]["platformId"] == "wb"
+    assert session["account"]["details"]["profileRef"].startswith("account_wb_login_")
+    assert session["account"]["details"]["profileRef"] != "cloak_wb_user_data_dir"
 
     serialized = json.dumps(session, ensure_ascii=False).lower()
     assert "secret-session-value" not in serialized
@@ -520,9 +522,12 @@ def test_headless_login_session_publishes_qrcode_preview(
     session = service.get_login_session(WORKSPACE_HEADERS["X-Workspace-Id"], session_id)
 
     assert calls["launch_kwargs"]["headless"] is True
+    assert calls["user_data_dir"].endswith("browser_data/account_pool/account_wb_login_preview")
+    assert not calls["user_data_dir"].endswith("browser_data/cloak_wb_user_data_dir")
     assert calls["preview_selector"] == "xpath=//img[@class='w-full h-full']"
     assert calls["closed"] is True
     assert account["platformId"] == "wb"
+    assert account["details"]["profileRef"] == "account_wb_login_preview"
     assert session["loginPreviewImage"] == "data:image/png;base64,cXItaW1hZ2U="
     assert session["loginPreviewKind"] == "qrcode"
 
@@ -1827,6 +1832,7 @@ def test_real_crawler_uses_cookie_login_when_active_account_exists(
             headless: bool,
             start_date: str | None,
             end_date: str | None,
+            extra_env: dict[str, str] | None = None,
         ) -> dict[str, Any]:
             calls.append(
                 {
@@ -1838,6 +1844,7 @@ def test_real_crawler_uses_cookie_login_when_active_account_exists(
                     "headless": headless,
                     "startDate": start_date,
                     "endDate": end_date,
+                    "extraEnv": extra_env,
                 }
             )
             return {
@@ -1881,6 +1888,130 @@ def test_real_crawler_uses_cookie_login_when_active_account_exists(
     assert stats["totalNotes"] == 3
 
 
+def test_real_crawler_prepares_account_pool_profile_by_strategy(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    browser_data_dir = tmp_path / "browser_data"
+    old_profile = browser_data_dir / "account_pool" / "account_wb_old"
+    new_profile = browser_data_dir / "account_pool" / "account_wb_new"
+    (old_profile / "Default").mkdir(parents=True)
+    (new_profile / "Default").mkdir(parents=True)
+    (old_profile / "Default" / "marker.txt").write_text("old", encoding="utf-8")
+    (new_profile / "Default" / "marker.txt").write_text("new", encoding="utf-8")
+    (old_profile / "SingletonLock").write_text("locked", encoding="utf-8")
+    monkeypatch.setenv("BETTAFISH_CRAWLER_BROWSER_DATA_DIR", str(browser_data_dir))
+
+    for account_id, profile_ref, updated_at in (
+        ("wb_old", "account_wb_old", "2026-05-20T00:00:00Z"),
+        ("wb_new", "account_wb_new", "2026-05-22T00:00:00Z"),
+    ):
+        response = client.put(
+            f"/api/v1/crawler-accounts/{account_id}",
+            headers=WORKSPACE_HEADERS,
+            json={
+                "platformId": "wb",
+                "displayName": account_id,
+                "status": "active",
+                "details": {
+                    "loginStateNames": ["SUB"],
+                    "profileRef": profile_ref,
+                },
+            },
+        )
+        assert response.status_code == 200
+        client.app.state.store.execute(
+            "UPDATE crawler_accounts SET updated_at = ? WHERE workspace_id = ? AND account_id = ?",
+            (updated_at, WORKSPACE_HEADERS["X-Workspace-Id"], account_id),
+        )
+
+    calls: list[dict[str, Any]] = []
+
+    class FakePlatformCrawler:
+        def __init__(self, log_callback=None):
+            self.log_callback = log_callback
+
+        def run_multi_platform_crawl_by_keywords(
+            self,
+            keywords: list[str],
+            platforms: list[str],
+            *,
+            login_type: str,
+            crawl_depth: int,
+            max_notes_per_keyword: int,
+            headless: bool,
+            start_date: str | None,
+            end_date: str | None,
+            extra_env: dict[str, str] | None = None,
+        ) -> dict[str, Any]:
+            del crawl_depth, max_notes_per_keyword, headless, start_date, end_date
+            assert extra_env is not None
+            task_browser_data_dir = Path(extra_env["BETTAFISH_CRAWLER_BROWSER_DATA_DIR"])
+            copied_profile = task_browser_data_dir / "cloak_wb_user_data_dir"
+            calls.append(
+                {
+                    "loginType": login_type,
+                    "platforms": platforms,
+                    "taskBrowserDataDir": task_browser_data_dir,
+                    "marker": (copied_profile / "Default" / "marker.txt").read_text(encoding="utf-8"),
+                    "singletonCopied": (copied_profile / "SingletonLock").exists(),
+                }
+            )
+            return {
+                "total_keywords": len(keywords),
+                "total_platforms": len(platforms),
+                "total_tasks": len(keywords) * len(platforms),
+                "successful_tasks": len(keywords) * len(platforms),
+                "failed_tasks": 0,
+                "total_notes": 1,
+                "total_comments": 0,
+                "platform_summary": {
+                    "wb": {
+                        "successful_keywords": len(keywords),
+                        "failed_keywords": 0,
+                        "total_notes": 1,
+                        "total_comments": 0,
+                    }
+                },
+            }
+
+    fake_module = types.ModuleType("MindSpider.DeepSentimentCrawling.platform_crawler")
+    fake_module.PlatformCrawler = FakePlatformCrawler
+    monkeypatch.setitem(sys.modules, "MindSpider.DeepSentimentCrawling.platform_crawler", fake_module)
+
+    response = client.post(
+        "/api/v1/crawler-tasks",
+        headers=WORKSPACE_HEADERS,
+        json={
+            "runMode": "deep_sentiment",
+            "targetDate": "2026-05-22",
+            "platforms": ["wb"],
+            "keywords": ["养老服务"],
+            "keywordSource": "manual",
+            "accountPoolStrategy": "oldest_active",
+        },
+    )
+    assert response.status_code == 202
+    task = response.json()["task"]
+
+    task_service: TaskService = client.app.state.task_service
+    stats = task_service._run_real_crawler(task)
+
+    assert task["accountPoolStrategy"] == "oldest_active"
+    assert stats["totalNotes"] == 1
+    assert calls == [
+        {
+            "loginType": "cookie",
+            "platforms": ["wb"],
+            "taskBrowserDataDir": calls[0]["taskBrowserDataDir"],
+            "marker": "old",
+            "singletonCopied": False,
+        }
+    ]
+    assert not calls[0]["taskBrowserDataDir"].exists()
+
+
 def test_real_crawler_streams_adapter_logs_to_task_events(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -1900,8 +2031,9 @@ def test_real_crawler_streams_adapter_logs_to_task_events(
             headless: bool,
             start_date: str | None,
             end_date: str | None,
+            extra_env: dict[str, str] | None = None,
         ) -> dict[str, Any]:
-            del login_type, crawl_depth, max_notes_per_keyword, headless, start_date, end_date
+            del login_type, crawl_depth, max_notes_per_keyword, headless, start_date, end_date, extra_env
             assert self.log_callback is not None
             self.log_callback("stdout", "MediaCrawler INFO started")
             self.log_callback("stderr", "MediaCrawler ERROR sample")

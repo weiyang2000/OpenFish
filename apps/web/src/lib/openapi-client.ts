@@ -383,6 +383,7 @@ export async function createCrawlerTask(input: CreateCrawlerTaskInput): Promise<
     endDate,
     schedule,
     crawlDepth: input.crawlDepth ?? 3,
+    accountPoolStrategy: input.accountPoolStrategy ?? "latest_active",
     platforms: input.platforms,
     keywords: input.keywords,
     keywordSource: input.keywordSource ?? "manual",

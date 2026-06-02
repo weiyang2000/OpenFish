@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS crawler_tasks (
     max_notes_per_keyword INTEGER NOT NULL DEFAULT 50,
     max_comments_per_note INTEGER NOT NULL DEFAULT 100,
     login_type TEXT,
+    account_pool_strategy TEXT NOT NULL DEFAULT 'latest_active',
     headless INTEGER NOT NULL DEFAULT 1,
     overrides_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL,
@@ -107,6 +108,7 @@ CREATE TABLE IF NOT EXISTS crawler_platform_configs (
     keyword_source TEXT NOT NULL,
     frequency_json TEXT NOT NULL DEFAULT '{}',
     login_type TEXT NOT NULL,
+    account_pool_strategy TEXT NOT NULL DEFAULT 'latest_active',
     headless INTEGER NOT NULL,
     updated_at TEXT NOT NULL,
     updated_by_json TEXT,
@@ -225,6 +227,7 @@ CREATE TABLE IF NOT EXISTS crawler_tasks (
     max_notes_per_keyword INTEGER NOT NULL DEFAULT 50,
     max_comments_per_note INTEGER NOT NULL DEFAULT 100,
     login_type VARCHAR(64),
+    account_pool_strategy VARCHAR(64) NOT NULL DEFAULT 'latest_active',
     headless INTEGER NOT NULL DEFAULT 1,
     overrides_json LONGTEXT NOT NULL,
     status VARCHAR(64) NOT NULL,
@@ -274,6 +277,7 @@ CREATE TABLE IF NOT EXISTS crawler_platform_configs (
     keyword_source VARCHAR(64) NOT NULL,
     frequency_json LONGTEXT NOT NULL,
     login_type VARCHAR(64) NOT NULL,
+    account_pool_strategy VARCHAR(64) NOT NULL DEFAULT 'latest_active',
     headless INTEGER NOT NULL,
     updated_at VARCHAR(64) NOT NULL,
     updated_by_json LONGTEXT,
@@ -516,8 +520,20 @@ class Store:
             self._ensure_column(
                 conn,
                 "crawler_tasks",
+                "account_pool_strategy",
+                "VARCHAR(64) NOT NULL DEFAULT 'latest_active'",
+            )
+            self._ensure_column(
+                conn,
+                "crawler_tasks",
                 "headless",
                 "INTEGER NOT NULL DEFAULT 1",
+            )
+            self._ensure_column(
+                conn,
+                "crawler_platform_configs",
+                "account_pool_strategy",
+                "VARCHAR(64) NOT NULL DEFAULT 'latest_active'",
             )
 
     def _exec_schema(self, conn: Any) -> None:

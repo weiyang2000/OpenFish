@@ -1193,6 +1193,11 @@ components:
       type: string
       enum: [manual]
 
+    CrawlerAccountPoolStrategy:
+      type: string
+      enum: [latest_active, oldest_active, round_robin]
+      description: Strategy for selecting an active crawler account from the platform account pool.
+
     ApiErrorCode:
       type: string
       enum:
@@ -1823,6 +1828,8 @@ components:
         loginType:
           type: string
           enum: [qrcode, phone, cookie]
+        accountPoolStrategy:
+          $ref: "#/components/schemas/CrawlerAccountPoolStrategy"
         headless:
           type: boolean
 
@@ -2299,6 +2306,9 @@ components:
         loginType:
           type: string
           enum: [qrcode, phone, cookie]
+        accountPoolStrategy:
+          $ref: "#/components/schemas/CrawlerAccountPoolStrategy"
+          default: latest_active
         headless:
           type: boolean
         overrides:
@@ -2352,6 +2362,8 @@ components:
               type: integer
               minimum: 1
               maximum: 10
+            accountPoolStrategy:
+              $ref: "#/components/schemas/CrawlerAccountPoolStrategy"
             stats:
               $ref: "#/components/schemas/CrawlerStats"
             error:

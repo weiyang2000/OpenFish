@@ -170,7 +170,7 @@ test("filters crawler accounts by platform and status with empty state", async (
   await page.getByRole("button", { name: "爬虫" }).click();
 
   await expect(page.getByText("3 / 3 个账号")).toBeVisible();
-  await page.getByLabel("账号平台筛选").selectOption("xhs");
+  await page.getByRole("tab", { name: /小红书/ }).click();
   await expect(page.getByText("1 / 3 个账号")).toBeVisible();
   await expect(page.getByText("研究采集号")).toBeVisible();
   await expect(page.getByText("知潮 运营号")).toHaveCount(0);
@@ -178,7 +178,7 @@ test("filters crawler accounts by platform and status with empty state", async (
   await page.getByLabel("账号状态筛选").selectOption("active");
   await expect(page.getByText("暂无爬虫账号")).toBeVisible();
 
-  await page.getByLabel("账号平台筛选").selectOption("all");
+  await page.getByRole("tab", { name: /全部/ }).click();
   await page.getByLabel("账号状态筛选").selectOption("expired");
   await expect(page.getByText("短视频监测")).toBeVisible();
 });

@@ -52,6 +52,8 @@ export type CrawlerAccountStatus =
 
 export type CrawlerLoginType = "qrcode" | "phone" | "cookie";
 
+export type CrawlerAccountPoolStrategy = "latest_active" | "oldest_active" | "round_robin";
+
 export type CrawlerSentiment = "positive" | "neutral" | "negative" | "unknown";
 
 export type LogLevel = "debug" | "info" | "warning" | "error" | "critical";
@@ -183,6 +185,7 @@ export interface CrawlerTask {
   endDate?: string;
   schedule?: CrawlFrequency;
   crawlDepth: number;
+  accountPoolStrategy?: CrawlerAccountPoolStrategy;
   platforms: PlatformId[];
   keywords: string[];
   keywordSource: CrawlerTaskKeywordSource;
@@ -210,6 +213,7 @@ export interface PlatformPolicy {
   keywordSource: KeywordSource;
   frequency: CrawlFrequency;
   loginType: CrawlerLoginType;
+  accountPoolStrategy: CrawlerAccountPoolStrategy;
   headless: boolean;
   updatedAt: string;
 }
@@ -439,6 +443,7 @@ export interface CreateCrawlerTaskInput {
   maxNotesPerKeyword?: number;
   maxCommentsPerNote?: number;
   loginType?: CrawlerLoginType;
+  accountPoolStrategy?: CrawlerAccountPoolStrategy;
   headless?: boolean;
   owner: UserRef;
 }

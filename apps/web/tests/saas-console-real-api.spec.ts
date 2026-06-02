@@ -845,6 +845,7 @@ function platform(
       keywordSource: "manual",
       frequency: { mode: "manual", timezone: "Asia/Shanghai" },
       loginType: "qrcode",
+      accountPoolStrategy: "latest_active",
       headless: true,
       updatedAt: timestamp
     }

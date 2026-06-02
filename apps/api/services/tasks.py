@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -15,6 +16,7 @@ from typing import Any
 from loguru import logger
 
 from apps.api.schemas import (
+    ACCOUNT_POOL_STRATEGIES,
     ApiError,
     CreateCrawlerTaskRequest,
     CreateReportTaskRequest,
@@ -454,9 +456,9 @@ class TaskService:
                 start_date, end_date, schedule_json,
                 platforms_json, keywords_json, keyword_source,
                 crawl_depth, max_notes_per_keyword, max_comments_per_note, login_type,
-                headless, overrides_json, status, progress, stats_json,
+                account_pool_strategy, headless, overrides_json, status, progress, stats_json,
                 owner_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -478,6 +480,7 @@ class TaskService:
                 if payload.maxCommentsPerNote is not None
                 else 100,
                 payload.loginType,
+                payload.accountPoolStrategy,
                 1 if payload.headless is not False else 0,
                 dumps([item.model_dump(mode="json") for item in payload.overrides]),
                 initial_status,
@@ -1330,23 +1333,37 @@ class TaskService:
 
     def _run_real_crawler(self, task: dict[str, Any]) -> dict[str, Any]:
         login_type = self._crawler_login_type(task)
+        browser_data_dir = (
+            self._prepare_crawler_account_profiles(task)
+            if login_type == "cookie" and task.get("workspaceId")
+            else None
+        )
 
         from MindSpider.DeepSentimentCrawling.platform_crawler import PlatformCrawler
 
         crawler = PlatformCrawler(
             log_callback=lambda source, line: self._record_crawler_log_event(task, source, line)
         )
-        result = crawler.run_multi_platform_crawl_by_keywords(
-            task["keywords"],
-            task["platforms"],
-            login_type=login_type,
-            crawl_depth=task.get("crawlDepth") or 3,
-            max_notes_per_keyword=task.get("maxNotesPerKeyword") or 50,
-            headless=task.get("headless") is not False,
-            start_date=task.get("startDate") or task.get("targetDate"),
-            end_date=task.get("endDate") or task.get("targetDate"),
-        )
-        return self._real_crawler_stats_to_api(result)
+        try:
+            result = crawler.run_multi_platform_crawl_by_keywords(
+                task["keywords"],
+                task["platforms"],
+                login_type=login_type,
+                crawl_depth=task.get("crawlDepth") or 3,
+                max_notes_per_keyword=task.get("maxNotesPerKeyword") or 50,
+                headless=task.get("headless") is not False,
+                start_date=task.get("startDate") or task.get("targetDate"),
+                end_date=task.get("endDate") or task.get("targetDate"),
+                extra_env=(
+                    {"BETTAFISH_CRAWLER_BROWSER_DATA_DIR": str(browser_data_dir)}
+                    if browser_data_dir
+                    else None
+                ),
+            )
+            return self._real_crawler_stats_to_api(result)
+        finally:
+            if browser_data_dir:
+                self._cleanup_crawler_account_profiles(browser_data_dir)
 
     def _record_crawler_log_event(self, task: dict[str, Any], source: str, line: str) -> None:
         workspace_id = task.get("workspaceId")
@@ -1394,6 +1411,149 @@ class TaskService:
                 )
             return "cookie"
         return task.get("loginType") or "qrcode"
+
+    def _prepare_crawler_account_profiles(self, task: dict[str, Any]) -> Path | None:
+        workspace_id = task.get("workspaceId")
+        platforms = task.get("platforms") or []
+        if not workspace_id or not platforms:
+            return None
+
+        selections = self._select_crawler_accounts(
+            workspace_id,
+            platforms,
+            task.get("accountPoolStrategy") or "latest_active",
+            task.get("id") or "",
+        )
+        missing = [platform for platform in platforms if platform not in selections]
+        if missing:
+            raise RuntimeError(
+                "No active crawler account available for platform(s): "
+                + ", ".join(missing)
+                + ". Please complete account login before starting a crawl task."
+            )
+
+        browser_data_dir = self._crawler_task_browser_data_dir(
+            workspace_id,
+            task.get("id") or new_id("crawler_run"),
+        )
+        use_task_browser_data = any(self._account_profile_dir(row) is not None for row in selections.values())
+        if not use_task_browser_data:
+            return None
+
+        copied = False
+        for platform, row in selections.items():
+            source_dir = (
+                self._account_profile_dir(row)
+                or self._browser_data_base_dir() / f"cloak_{platform}_user_data_dir"
+            )
+            if not source_dir.exists() or not source_dir.is_dir():
+                raise RuntimeError(
+                    f"Crawler account profile is missing for platform {platform}; "
+                    "please log in this account again."
+                )
+            target_dir = browser_data_dir / f"cloak_{platform}_user_data_dir"
+            self._copy_browser_profile(source_dir, target_dir)
+            copied = True
+
+        return browser_data_dir if copied else None
+
+    def _select_crawler_accounts(
+        self,
+        workspace_id: str,
+        platforms: list[str],
+        strategy: str,
+        task_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        strategy = self._normalize_account_pool_strategy(strategy)
+        selections: dict[str, dict[str, Any]] = {}
+        for platform in platforms:
+            rows = self.store.query_all(
+                """
+                SELECT id, platform_id, details_json, updated_at
+                FROM crawler_accounts
+                WHERE workspace_id = ? AND platform_id = ? AND status = 'active'
+                ORDER BY updated_at DESC
+                LIMIT 100
+                """,
+                (workspace_id, platform),
+            )
+            eligible = [row for row in rows if self._active_account_has_login_state(platform, row)]
+            if not eligible:
+                continue
+            if strategy == "oldest_active":
+                selections[platform] = eligible[-1]
+            elif strategy == "round_robin":
+                digest = hashlib.sha256(f"{task_id}:{platform}".encode("utf-8")).hexdigest()
+                selections[platform] = eligible[int(digest[:8], 16) % len(eligible)]
+            else:
+                selections[platform] = eligible[0]
+        return selections
+
+    @staticmethod
+    def _normalize_account_pool_strategy(strategy: str | None) -> str:
+        return strategy if strategy in ACCOUNT_POOL_STRATEGIES else "latest_active"
+
+    def _account_profile_dir(self, row: dict[str, Any]) -> Path | None:
+        details = loads(row.get("details_json"), {})
+        if not isinstance(details, dict):
+            return None
+        profile_ref = details.get("profileRef")
+        if not isinstance(profile_ref, str) or not profile_ref.strip():
+            return None
+
+        ref_path = Path(profile_ref)
+        if ref_path.is_absolute() or ".." in ref_path.parts:
+            raise RuntimeError("Crawler account profile reference is invalid; please log in this account again.")
+
+        base_dir = self._browser_data_base_dir()
+        if profile_ref.startswith("cloak_") and profile_ref.endswith("_user_data_dir"):
+            return base_dir / profile_ref
+        return base_dir / "account_pool" / profile_ref
+
+    def _crawler_task_browser_data_dir(self, workspace_id: str, task_id: str) -> Path:
+        return self._report_task_workspace(workspace_id, task_id) / "crawler" / "browser_data"
+
+    def _browser_data_base_dir(self) -> Path:
+        configured = os.getenv("BETTAFISH_CRAWLER_BROWSER_DATA_DIR")
+        return (
+            Path(configured)
+            if configured
+            else self.repo_root / "MindSpider" / "DeepSentimentCrawling" / "MediaCrawler" / "browser_data"
+        )
+
+    def _copy_browser_profile(self, source_dir: Path, target_dir: Path) -> None:
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            source_dir,
+            target_dir,
+            ignore=shutil.ignore_patterns(
+                "SingletonLock",
+                "SingletonSocket",
+                "SingletonCookie",
+                "LOCK",
+                "*.lock",
+            ),
+        )
+        self._clear_profile_singleton_files(target_dir)
+
+    def _cleanup_crawler_account_profiles(self, browser_data_dir: Path) -> None:
+        try:
+            if browser_data_dir.exists():
+                shutil.rmtree(browser_data_dir)
+        except OSError:
+            logger.warning(f"Failed to clean crawler browser profile directory: {browser_data_dir}")
+
+    @staticmethod
+    def _clear_profile_singleton_files(profile_dir: Path) -> None:
+        for filename in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            path = profile_dir / filename
+            try:
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+            except OSError:
+                continue
 
     def _missing_active_account_platforms(
         self,
@@ -1636,6 +1796,7 @@ class TaskService:
             "maxNotesPerKeyword": row["max_notes_per_keyword"],
             "maxCommentsPerNote": row["max_comments_per_note"],
             "loginType": row["login_type"],
+            "accountPoolStrategy": row.get("account_pool_strategy") or "latest_active",
             "headless": bool(row["headless"]),
             "status": status,
             "progress": row["progress"],

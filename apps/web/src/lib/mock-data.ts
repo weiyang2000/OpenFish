@@ -37,6 +37,7 @@ const policy = (
     timezone: "Asia/Shanghai"
   },
   loginType: "qrcode",
+  accountPoolStrategy: "latest_active",
   headless: true,
   updatedAt: now,
   ...overrides

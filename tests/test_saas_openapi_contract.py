@@ -479,6 +479,7 @@ def test_real_crawler_adapter_invokes_keyword_platform_api(
             headless: bool,
             start_date: str | None,
             end_date: str | None,
+            extra_env: dict[str, str] | None = None,
         ) -> dict[str, Any]:
             calls.append(
                 {
@@ -490,6 +491,7 @@ def test_real_crawler_adapter_invokes_keyword_platform_api(
                     "headless": headless,
                     "startDate": start_date,
                     "endDate": end_date,
+                    "extraEnv": extra_env,
                 }
             )
             return {
@@ -547,6 +549,7 @@ def test_real_crawler_adapter_invokes_keyword_platform_api(
             "headless": False,
             "startDate": "2026-05-20",
             "endDate": "2026-05-22",
+            "extraEnv": None,
         }
     ]
     assert stats["totalKeywords"] == 2

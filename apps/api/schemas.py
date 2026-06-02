@@ -34,6 +34,7 @@ CRAWLER_ACCOUNT_STATUSES = (
     "error",
     "unknown",
 )
+ACCOUNT_POOL_STRATEGIES = ("latest_active", "oldest_active", "round_robin")
 MASK = "********"
 
 
@@ -141,6 +142,7 @@ class PlatformPolicyInput(BaseModel):
     keywordSource: Literal["manual", "broad_topic_extraction", "mixed"] = "manual"
     frequency: CrawlFrequency = Field(default_factory=CrawlFrequency)
     loginType: Literal["qrcode", "phone", "cookie"] = "qrcode"
+    accountPoolStrategy: Literal["latest_active", "oldest_active", "round_robin"] = "latest_active"
     headless: bool = True
 
     @field_validator("keywords")
@@ -190,6 +192,7 @@ class CreateCrawlerTaskRequest(BaseModel):
     maxNotesPerKeyword: int | None = Field(default=None, ge=1, le=1000)
     maxCommentsPerNote: int | None = Field(default=None, ge=0, le=5000)
     loginType: Literal["qrcode", "phone", "cookie"] | None = None
+    accountPoolStrategy: Literal["latest_active", "oldest_active", "round_robin"] = "latest_active"
     headless: bool | None = None
     overrides: list[PlatformPolicyInput] = Field(default_factory=list)
     owner: UserRef | None = None

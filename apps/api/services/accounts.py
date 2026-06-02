@@ -292,7 +292,7 @@ class AccountService:
         self._ensure_platform(payload.platformId)
         session_id = new_id("login")
         now = utc_now()
-        profile_dir = self._profile_dir(payload.platformId)
+        profile_dir = self._login_session_profile_dir(payload.platformId, session_id)
         session = {
             "id": session_id,
             "workspaceId": workspace_id,
@@ -333,7 +333,7 @@ class AccountService:
         workspace_id: str,
         payload: CreateCrawlerAccountLoginSessionRequest,
     ) -> None:
-        profile_dir = self._profile_dir(payload.platformId)
+        profile_dir = self._login_session_profile_dir(payload.platformId, session_id)
         self._terminate_profile_browsers(profile_dir)
 
         profile_lock = self._profile_lock(payload.platformId)
@@ -391,7 +391,7 @@ class AccountService:
         except ModuleNotFoundError as exc:
             raise RuntimeError("CloakBrowser is not installed. Run `uv sync` or install `cloakbrowser`.") from exc
 
-        profile_dir = self._profile_dir(payload.platformId)
+        profile_dir = self._login_session_profile_dir(payload.platformId, session_id)
         profile_dir.mkdir(parents=True, exist_ok=True)
         login_url = PLATFORM_LOGIN_URLS[payload.platformId]
         context = await launch_persistent_context_async(
@@ -676,19 +676,33 @@ class AccountService:
                 "loginStateNames": markers,
                 "stateNames": sorted(state.keys())[:30],
                 "stateCount": len(state),
+                "profileRef": profile_dir.name,
+                "profileCapturedAt": utc_now(),
                 "loginSessionId": session_id,
             },
         )
         return self.upsert_account(workspace_id, account_id, payload)
 
     def _profile_dir(self, platform_id: str) -> Path:
+        return self._browser_data_base_dir() / f"cloak_{platform_id}_user_data_dir"
+
+    def _login_session_profile_dir(self, platform_id: str, session_id: str) -> Path:
+        return self._account_pool_dir() / self._login_session_profile_ref(platform_id, session_id)
+
+    def _account_pool_dir(self) -> Path:
+        return self._browser_data_base_dir() / "account_pool"
+
+    @staticmethod
+    def _login_session_profile_ref(platform_id: str, session_id: str) -> str:
+        return f"account_{platform_id}_{session_id}"
+
+    def _browser_data_base_dir(self) -> Path:
         configured = os.getenv("BETTAFISH_CRAWLER_BROWSER_DATA_DIR")
-        base_dir = (
+        return (
             Path(configured)
             if configured
             else self.repo_root / "MindSpider" / "DeepSentimentCrawling" / "MediaCrawler" / "browser_data"
         )
-        return base_dir / f"cloak_{platform_id}_user_data_dir"
 
     @staticmethod
     def _cookie_dict(items: list[dict[str, Any]]) -> dict[str, str]:

@@ -878,6 +878,66 @@ a {
   padding: 0 10px;
 }
 
+.account-platform-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfcff;
+}
+
+.account-platform-tab {
+  appearance: none;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.account-platform-tab span {
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: var(--cyan);
+  display: inline-grid;
+  place-items: center;
+  font-size: 12px;
+}
+
+.account-platform-tab:hover,
+.account-platform-tab:focus-visible {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.account-platform-tab:focus-visible {
+  outline: 3px solid rgba(0, 113, 227, 0.16);
+  outline-offset: 1px;
+}
+
+.account-platform-tab.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #ffffff;
+}
+
+.account-platform-tab.active span {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
 .account-list {
   display: grid;
 }

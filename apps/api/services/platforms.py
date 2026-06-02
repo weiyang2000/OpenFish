@@ -93,6 +93,7 @@ class PlatformService:
             "keywordSource": row["keyword_source"],
             "frequency": loads(row["frequency_json"], {"mode": "manual", "timezone": "Asia/Shanghai"}),
             "loginType": row["login_type"],
+            "accountPoolStrategy": row.get("account_pool_strategy") or "latest_active",
             "headless": bool(row["headless"]),
             "updatedAt": row["updated_at"],
             **self._optional_user("updatedBy", row["updated_by_json"]),
@@ -111,9 +112,9 @@ class PlatformService:
             INSERT INTO crawler_platform_configs (
                 workspace_id, platform_id, enabled, crawl_depth, max_keywords,
                 max_notes_per_keyword, max_comments_per_note, keywords_json,
-                keyword_source, frequency_json, login_type, headless, updated_at,
+                keyword_source, frequency_json, login_type, account_pool_strategy, headless, updated_at,
                 updated_by_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(workspace_id, platform_id) DO UPDATE SET
                 enabled = excluded.enabled,
                 crawl_depth = excluded.crawl_depth,
@@ -124,6 +125,7 @@ class PlatformService:
                 keyword_source = excluded.keyword_source,
                 frequency_json = excluded.frequency_json,
                 login_type = excluded.login_type,
+                account_pool_strategy = excluded.account_pool_strategy,
                 headless = excluded.headless,
                 updated_at = excluded.updated_at,
                 updated_by_json = excluded.updated_by_json
@@ -140,6 +142,7 @@ class PlatformService:
                 policy.keywordSource,
                 dumps(policy.frequency.model_dump(mode="json")),
                 policy.loginType,
+                policy.accountPoolStrategy,
                 1 if policy.headless else 0,
                 updated_at,
                 None,

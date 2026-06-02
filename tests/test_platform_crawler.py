@@ -27,8 +27,8 @@ def test_run_crawler_treats_qrcode_login_failure_as_failed(
     monkeypatch.setattr(crawler, "create_base_config", lambda *_: True)
     monkeypatch.setattr(crawler, "_count_platform_records", lambda _: {"notes": 0, "comments": 0})
 
-    def fake_run(cmd, timeout):
-        del timeout
+    def fake_run(cmd, timeout, extra_env=None):
+        del timeout, extra_env
         return subprocess.CompletedProcess(
             args=cmd,
             returncode=0,
@@ -60,8 +60,8 @@ def test_run_crawler_reports_new_database_records(
         lambda *_, **__: {"processed": 8, "updated": 8, "failed": 0},
     )
 
-    def fake_run(cmd, timeout):
-        del timeout
+    def fake_run(cmd, timeout, extra_env=None):
+        del timeout, extra_env
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(crawler, "_run_media_crawler_command", fake_run)
@@ -87,11 +87,15 @@ def test_run_crawler_passes_dates_into_mediacrawler_before_sentiment(
     monkeypatch.setattr(crawler, "create_base_config", lambda *_: True)
     monkeypatch.setattr(crawler, "_count_platform_records", lambda _: next(counts))
 
-    def fake_run(cmd, timeout):
+    def fake_run(cmd, timeout, extra_env=None):
         del timeout
         calls.append("run")
-        assert os.environ["CRAWLER_START_DATE"] == "2026-05-20"
-        assert os.environ["CRAWLER_END_DATE"] == "2026-05-22"
+        assert extra_env == {
+            "CRAWLER_START_DATE": "2026-05-20",
+            "CRAWLER_END_DATE": "2026-05-22",
+        }
+        assert "CRAWLER_START_DATE" not in os.environ
+        assert "CRAWLER_END_DATE" not in os.environ
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     def fake_sentiment(platform, *, start_date, end_date, touched_since_ms):
@@ -131,8 +135,8 @@ def test_run_crawler_treats_invalid_cookie_as_failed(
     monkeypatch.setattr(crawler, "create_base_config", lambda *_: True)
     monkeypatch.setattr(crawler, "_count_platform_records", lambda _: {"notes": 0, "comments": 0})
 
-    def fake_run(cmd, timeout):
-        del timeout
+    def fake_run(cmd, timeout, extra_env=None):
+        del timeout, extra_env
         return subprocess.CompletedProcess(
             args=cmd,
             returncode=0,

@@ -200,6 +200,7 @@ class PlatformCrawler:
         headless: bool = True,
         start_date: str | date | None = None,
         end_date: str | date | None = None,
+        extra_env: Optional[Dict[str, str]] = None,
     ) -> Dict:
         """
         运行爬虫
@@ -251,9 +252,11 @@ class PlatformCrawler:
             
             logger.info(f"执行命令: {' '.join(cmd)}")
             before_counts = self._count_platform_records(platform)
-            date_filter_env = self._date_filter_env(start_date, end_date)
-            with _temporary_environ(date_filter_env):
-                result = self._run_media_crawler_command(cmd, timeout=3600)
+            command_env = {
+                **(extra_env or {}),
+                **self._date_filter_env(start_date, end_date),
+            }
+            result = self._run_media_crawler_command(cmd, timeout=3600, extra_env=command_env)
             
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
@@ -437,10 +440,15 @@ class PlatformCrawler:
                 return f"MediaCrawler reported failure: {marker}"
         return None
 
-    def _run_media_crawler_command(self, cmd: List[str], timeout: int) -> subprocess.CompletedProcess:
+    def _run_media_crawler_command(
+        self,
+        cmd: List[str],
+        timeout: int,
+        extra_env: Optional[Dict[str, str]] = None,
+    ) -> subprocess.CompletedProcess:
         if len(cmd) >= 2 and cmd[0] == sys.executable and cmd[1] == "main.py":
             cmd = [cmd[0], "-u", *cmd[1:]]
-        return self._run_command_streaming(cmd, cwd=self.mediacrawler_path, timeout=timeout)
+        return self._run_command_streaming(cmd, cwd=self.mediacrawler_path, timeout=timeout, extra_env=extra_env)
 
     def _run_command_streaming(
         self,
@@ -448,6 +456,7 @@ class PlatformCrawler:
         *,
         cwd: Path,
         timeout: int,
+        extra_env: Optional[Dict[str, str]] = None,
     ) -> subprocess.CompletedProcess:
         stdout_lines: List[str] = []
         stderr_lines: List[str] = []
@@ -459,7 +468,7 @@ class PlatformCrawler:
             text=True,
             errors="replace",
             bufsize=1,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env={**os.environ, **(extra_env or {}), "PYTHONUNBUFFERED": "1"},
         )
 
         def collect(pipe, source: str, lines: List[str]) -> None:
@@ -606,6 +615,7 @@ class PlatformCrawler:
         start_date: str | date | None = None,
         end_date: str | date | None = None,
         crawl_depth: int = 3,
+        extra_env: Optional[Dict[str, str]] = None,
     ) -> Dict:
         """
         基于关键词的多平台爬取 - 每个关键词在所有平台上都进行爬取
@@ -666,6 +676,7 @@ class PlatformCrawler:
                     headless,
                     start_date=start_date,
                     end_date=end_date,
+                    extra_env=extra_env,
                 )
                 
                 if result.get("success"):

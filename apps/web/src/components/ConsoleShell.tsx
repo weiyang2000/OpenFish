@@ -68,6 +68,7 @@ import type {
   CrawlFrequency,
   CrawlerAccount,
   CrawlerAccountLoginSession,
+  CrawlerAccountPoolStrategy,
   CrawlerAccountStatus,
   CrawlerDataRecord,
   CrawlerDataPage,
@@ -151,6 +152,16 @@ const loginTypeLabels: Record<PlatformPolicy["loginType"], string> = {
   phone: "手机号",
   cookie: "Cookie"
 };
+
+const accountPoolStrategyLabels: Record<CrawlerAccountPoolStrategy, string> = {
+  latest_active: "最近可用",
+  oldest_active: "最早可用",
+  round_robin: "轮换分配"
+};
+
+const accountPoolStrategyOptions = Object.entries(accountPoolStrategyLabels) as Array<
+  [CrawlerAccountPoolStrategy, string]
+>;
 
 const scheduleLabels: Record<CrawlFrequency["mode"], string> = {
   manual: "手动执行",
@@ -513,6 +524,7 @@ export function ConsoleShell() {
     crawlDepth: number;
     maxNotesPerKeyword: number;
     maxCommentsPerNote: number;
+    accountPoolStrategy: CrawlerAccountPoolStrategy;
     headless: boolean;
   }>({
     startDate: "2026-05-22",
@@ -524,6 +536,7 @@ export function ConsoleShell() {
     crawlDepth: 3,
     maxNotesPerKeyword: 50,
     maxCommentsPerNote: 100,
+    accountPoolStrategy: "latest_active",
     headless: true
   });
   const [identityForm, setIdentityForm] = useState({
@@ -690,6 +703,19 @@ export function ConsoleShell() {
       const statusMatches = accountStatusFilter === "all" || account.status === accountStatusFilter;
       return platformMatches && statusMatches;
     }) ?? [];
+  const crawlerAccountPlatformCounts = useMemo(() => {
+    const counts: Record<PlatformId | "all", number> = { all: snapshot?.crawlerAccounts.length ?? 0 } as Record<
+      PlatformId | "all",
+      number
+    >;
+    for (const platform of snapshot?.platforms ?? []) {
+      counts[platform.id] = 0;
+    }
+    for (const account of snapshot?.crawlerAccounts ?? []) {
+      counts[account.platformId] = (counts[account.platformId] ?? 0) + 1;
+    }
+    return counts;
+  }, [snapshot?.crawlerAccounts, snapshot?.platforms]);
   const filteredLogs =
     snapshot?.logs.filter((line) => logSource === "all" || line.source === logSource) ?? [];
   const selectedCrawlerDataKeys = Object.keys(selectedCrawlerDataRecords);
@@ -740,6 +766,13 @@ export function ConsoleShell() {
         });
       }
     });
+
+  const openAddAccountModal = () => {
+    if (accountPlatformFilter !== "all") {
+      setAccountForm((current) => ({ ...current, platformId: accountPlatformFilter }));
+    }
+    setShowAccountModal(true);
+  };
 
   async function loadCrawlerData(
     page = crawlerDataPage,
@@ -976,6 +1009,7 @@ export function ConsoleShell() {
         crawlDepth: crawlerForm.crawlDepth,
         maxNotesPerKeyword: crawlerForm.maxNotesPerKeyword,
         maxCommentsPerNote: crawlerForm.maxCommentsPerNote,
+        accountPoolStrategy: crawlerForm.accountPoolStrategy,
         headless: crawlerForm.headless,
         owner: currentUser
       });
@@ -1423,24 +1457,10 @@ export function ConsoleShell() {
                   <span>{filteredCrawlerAccounts.length} / {snapshot.crawlerAccounts.length} 个账号</span>
                 </div>
                 <div className="account-filters">
-                  <Button variant="secondary" className="secondary-button" onClick={() => setShowAccountModal(true)}>
+                  <Button variant="secondary" className="secondary-button" onClick={openAddAccountModal}>
                     <Plus size={16} />
                     增加账号
                   </Button>
-                  <select
-                    value={accountPlatformFilter}
-                    aria-label="账号平台筛选"
-                    onChange={(event) =>
-                      setAccountPlatformFilter(event.target.value === "all" ? "all" : (event.target.value as PlatformId))
-                    }
-                  >
-                    <option value="all">全部平台</option>
-                    {snapshot.platforms.map((platform) => (
-                      <option key={platform.id} value={platform.id}>
-                        {platform.name}
-                      </option>
-                    ))}
-                  </select>
                   <select
                     value={accountStatusFilter}
                     aria-label="账号状态筛选"
@@ -1459,6 +1479,34 @@ export function ConsoleShell() {
                     <option value="unknown">unknown</option>
                   </select>
                 </div>
+              </div>
+              <div className="account-platform-tabs" role="tablist" aria-label="爬虫账号平台">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={accountPlatformFilter === "all"}
+                  className={`account-platform-tab${accountPlatformFilter === "all" ? " active" : ""}`}
+                  onClick={() => setAccountPlatformFilter("all")}
+                >
+                  全部
+                  <span>{crawlerAccountPlatformCounts.all}</span>
+                </button>
+                {snapshot.platforms.map((platform) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={accountPlatformFilter === platform.id}
+                    className={`account-platform-tab${accountPlatformFilter === platform.id ? " active" : ""}`}
+                    key={platform.id}
+                    onClick={() => {
+                      setAccountPlatformFilter(platform.id);
+                      setAccountForm((current) => ({ ...current, platformId: platform.id }));
+                    }}
+                  >
+                    {platform.name}
+                    <span>{crawlerAccountPlatformCounts[platform.id] ?? 0}</span>
+                  </button>
+                ))}
               </div>
               {filteredCrawlerAccounts.length === 0 ? (
                 <EmptyState title="暂无爬虫账号" detail="账号接入后会显示平台、状态、登录方式与校验结果" />
@@ -1592,6 +1640,24 @@ export function ConsoleShell() {
                   }
                 />
               </label>
+              <label className="field">
+                <span>账号池策略</span>
+                <select
+                  value={crawlerForm.accountPoolStrategy}
+                  onChange={(event) =>
+                    setCrawlerForm({
+                      ...crawlerForm,
+                      accountPoolStrategy: event.target.value as CrawlerAccountPoolStrategy
+                    })
+                  }
+                >
+                  {accountPoolStrategyOptions.map(([strategy, label]) => (
+                    <option key={strategy} value={strategy}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="toggle-pill headless-toggle">
                 <input
                   type="checkbox"
@@ -1638,6 +1704,7 @@ export function ConsoleShell() {
                     <span>
                       {task.platforms.map((id) => platformNames[id]).join(" / ")} · {formatCrawlerDateRange(task)} ·{" "}
                       {formatCrawlerSchedule(task.schedule)} ·{" "}
+                      {accountPoolStrategyLabels[task.accountPoolStrategy ?? "latest_active"]} ·{" "}
                       {formatTime(task.updatedAt)}
                     </span>
                     <ProgressBar value={task.progress} />
