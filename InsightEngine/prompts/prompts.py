@@ -316,6 +316,8 @@ SYSTEM_PROMPT_FIRST_SUMMARY = f"""
    - **数据引用**：标注具体来源平台和数量
    - **多样性展示**：涵盖不同观点、不同情感倾向的声音
    - **典型案例**：选择最有代表性的评论和讨论
+   - **来源链接**：搜索结果会在正文前提供 `[来源标题](URL)` 或“来源：...”标签；凡涉及数据、事实、用户评论、情绪统计、趋势判断的句子，必须就近保留对应的 Markdown 链接或来源标签
+   - **格式安全**：禁止输出裸 URL、HTML `<a>` 标签、半截 Markdown 链接或无法闭合的 `[text](url)` 语法；没有真实 URL 时只使用“来源：...”标签，绝不伪造链接
 
 6. **语言表达要求**：
    - 专业而不失生动，准确而富有感染力
@@ -488,6 +490,10 @@ SYSTEM_PROMPT_REFLECTION_SUMMARY = f"""
    - 平衡专业性和可读性
    - 突出重点，形成有力的论证链条
 
+8. **来源引用硬性要求**：
+   - 搜索结果会在正文前提供 `[来源标题](URL)` 或“来源：...”标签；凡新增或保留的数据、事实、用户评论、情绪统计、趋势判断，都必须就近保留对应的 Markdown 链接或来源标签
+   - 禁止输出裸 URL、HTML `<a>` 标签、半截 Markdown 链接或无法闭合的 `[text](url)` 语法；没有真实 URL 时只使用“来源：...”标签，绝不伪造链接
+
 **内容丰富度检查清单**：
 - [ ] 是否包含足够多的具体数据和统计信息？
 - [ ] 是否引用了足够多样化的用户声音？
@@ -519,6 +525,11 @@ def build_report_formatting_prompt(mode_preset: InsightModePreset) -> str:
 </INPUT JSON SCHEMA>
 
 **你的核心使命：{mode_preset.report_output_guidance}**
+
+**来源引用硬性要求：**
+- 输入段落中已有的 `[来源标题](URL)` 必须保留，不得删除或改成裸 URL。
+- 所有数据、事实、用户评论、情绪统计、趋势判断句都要就近带来源链接；没有真实 URL 时使用原文中的“来源：...”标签。
+- 禁止输出 HTML 链接、裸 URL、半截 Markdown 链接或无法闭合的 `[text](url)`。
 
 **短报告结构要求：**
 ```markdown
@@ -558,6 +569,11 @@ def build_report_formatting_prompt(mode_preset: InsightModePreset) -> str:
 </INPUT JSON SCHEMA>
 
 **你的核心使命：{mode_preset.report_output_guidance}**
+
+**来源引用硬性要求：**
+- 输入段落中已有的 `[来源标题](URL)` 必须保留，不得删除或改成裸 URL。
+- 所有数据、事实、用户评论、情绪统计、趋势判断句都要就近带来源链接；没有真实 URL 时使用原文中的“来源：...”标签。
+- 禁止输出 HTML 链接、裸 URL、半截 Markdown 链接或无法闭合的 `[text](url)`。
 
 **舆情分析报告的独特架构：**
 

@@ -333,10 +333,12 @@ SYSTEM_PROMPT_CHAPTER_JSON = f"""
 15. 行间公式用block.type="math"并填入math.latex，行内公式在paragraph.inlines里将文本设为Latex并加上marks.type="math"，渲染层会用MathJax处理；
 16. widget配色需与CSS变量兼容，不要硬编码背景色或文字色，legend/ticks由渲染层控制；
 17. 善用callout、kpiGrid、表格、widget等提升版面丰富度，但必须遵守模板章节范围。
-18. 输出前务必自检JSON语法：禁止出现`{{}}{{`或`][`相连缺少逗号、列表项嵌套超过一层、未闭合的括号或未转义换行，`list` block的items必须是`[[block,...], ...]`结构，若无法满足则返回错误提示而不是输出不合法JSON。
-19. 所有widget块必须在顶层提供`data`或`dataRef`（可将props中的`data`上移），确保Chart.js能够直接渲染；缺失数据时宁可输出表格或段落，绝不留空。
-20. 任何block都必须声明合法`type`（heading/paragraph/list/...）；若需要普通文本请使用`paragraph`并给出`inlines`，禁止返回`type:null`或未知值。
-21. blockquote内容限制：blockquote块内部的blocks只允许包含paragraph类型的block，严禁在blockquote内嵌套表格（table）、列表（list）、图表（widget）、标题（heading）、代码块（code）、公式（math）、嵌套引用（blockquote）等任何非paragraph块；如果引用内容需要用表格/列表等复杂结构呈现，必须将其移到blockquote外部。
+18. 来源引用要求：输入 reports 中已有的 Markdown 链接 `[来源标题](URL)` 必须尽量保留；在IR中请转换为对应 inline run 的 `marks:[{{"type":"link","href":"URL"}}]`，文本为“来源标题”。凡涉及数据、事实、引述、评论、趋势判断的句子，必须就近引用已有来源链接或保留“来源：...”标签。
+19. 来源安全要求：严禁输出HTML `<a>` 标签、裸 URL、半截 Markdown 链接或无法闭合的 `[text](url)`；如果无法安全转换链接，保留可读来源文本并移除链接mark，不能让单个引用破坏JSON结构。
+20. 输出前务必自检JSON语法：禁止出现`{{}}{{`或`][`相连缺少逗号、列表项嵌套超过一层、未闭合的括号或未转义换行，`list` block的items必须是`[[block,...], ...]`结构，若无法满足则返回错误提示而不是输出不合法JSON。
+21. 所有widget块必须在顶层提供`data`或`dataRef`（可将props中的`data`上移），确保Chart.js能够直接渲染；缺失数据时宁可输出表格或段落，绝不留空。
+22. 任何block都必须声明合法`type`（heading/paragraph/list/...）；若需要普通文本请使用`paragraph`并给出`inlines`，禁止返回`type:null`或未知值。
+23. blockquote内容限制：blockquote块内部的blocks只允许包含paragraph类型的block，严禁在blockquote内嵌套表格（table）、列表（list）、图表（widget）、标题（heading）、代码块（code）、公式（math）、嵌套引用（blockquote）等任何非paragraph块；如果引用内容需要用表格/列表等复杂结构呈现，必须将其移到blockquote外部。
 
 <CHAPTER JSON SCHEMA>
 {CHAPTER_JSON_SCHEMA_TEXT}

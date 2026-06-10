@@ -6,6 +6,7 @@
 import re
 import json
 from typing import Dict, Any, List
+from urllib.parse import urlparse
 from json.decoder import JSONDecodeError
 
 
@@ -285,6 +286,43 @@ def truncate_content(content: str, max_length: int = 20000) -> str:
         return truncated + "..."
 
 
+def _is_safe_source_url(url: Any) -> bool:
+    """Only pass through real, render-safe source URLs."""
+    if not isinstance(url, str):
+        return False
+    candidate = url.strip()
+    if not candidate or any(ch.isspace() for ch in candidate):
+        return False
+    parsed = urlparse(candidate)
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
+
+
+def _escape_markdown_link_text(text: Any) -> str:
+    """Escape link text so source titles cannot break Markdown links."""
+    value = str(text or "").strip() or "来源"
+    return value.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
+def _build_source_reference(result: Dict[str, Any]) -> str:
+    """Build a safe source reference without inventing URLs."""
+    title = result.get("title") or result.get("source") or result.get("platform") or "来源"
+    url = str(result.get("url") or "").strip()
+    if _is_safe_source_url(url):
+        return f"[{_escape_markdown_link_text(title)}]({url})"
+
+    labels = []
+    for key, label in (
+        ("platform", "平台"),
+        ("source_table", "表"),
+        ("author", "作者"),
+        ("published_date", "时间"),
+    ):
+        value = result.get(key)
+        if value:
+            labels.append(f"{label}:{value}")
+    return "来源：" + ("，".join(labels) if labels else _escape_markdown_link_text(title))
+
+
 def format_search_results_for_prompt(search_results: List[Dict[str, Any]], 
                                    max_length: int = 20000) -> List[str]:
     """
@@ -303,14 +341,15 @@ def format_search_results_for_prompt(search_results: List[Dict[str, Any]],
         content = result.get('content', '')
         if content:
             truncated_content = truncate_content(content, max_length)
+            source_reference = _build_source_reference(result)
             sentiment = result.get('sentiment_label')
             sentiment_score = result.get('sentiment_score')
             if sentiment:
                 sentiment_text = f"情绪: {sentiment}"
                 if sentiment_score is not None:
                     sentiment_text += f" ({sentiment_score})"
-                formatted_results.append(f"{sentiment_text}\n{truncated_content}")
+                formatted_results.append(f"{source_reference}\n{sentiment_text}\n{truncated_content}")
             else:
-                formatted_results.append(truncated_content)
+                formatted_results.append(f"{source_reference}\n{truncated_content}")
     
     return formatted_results

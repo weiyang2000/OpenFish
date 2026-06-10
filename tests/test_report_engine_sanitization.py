@@ -164,6 +164,42 @@ class ChapterSanitizationTestCase(unittest.TestCase):
         self.assertFalse(valid)
         self.assertTrue(any("title 必须与engine一致" in err for err in errors))
 
+    def test_link_mark_sanitization_keeps_safe_href(self):
+        marks, extra_text = self.node._sanitize_inline_marks(
+            [{"type": "link", "href": "https://example.com/report?id=1"}]
+        )
+        self.assertEqual(extra_text, "")
+        self.assertEqual(
+            marks,
+            [{"type": "link", "href": "https://example.com/report?id=1"}],
+        )
+
+    def test_link_mark_sanitization_drops_dangerous_href(self):
+        marks, extra_text = self.node._sanitize_inline_marks(
+            [{"type": "link", "href": "javascript:alert(1)"}]
+        )
+        self.assertEqual(extra_text, "")
+        self.assertEqual(marks, [])
+
+    def test_link_mark_sanitization_drops_empty_href_but_keeps_text(self):
+        chapter = {
+            "blocks": [
+                {
+                    "type": "paragraph",
+                    "inlines": [
+                        {
+                            "text": "来源标题",
+                            "marks": [{"type": "link", "href": ""}],
+                        }
+                    ],
+                }
+            ]
+        }
+        self.node._sanitize_chapter_blocks(chapter)
+        inline = chapter["blocks"][0]["inlines"][0]
+        self.assertEqual(inline["text"], "来源标题")
+        self.assertEqual(inline["marks"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

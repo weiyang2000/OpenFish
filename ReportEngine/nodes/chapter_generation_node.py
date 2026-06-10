@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 import re
 from typing import Any, Dict, List, Tuple, Callable, Optional, Set
+from urllib.parse import urlparse
 
 from loguru import logger
 
@@ -1869,8 +1870,30 @@ class ChapterGenerationNode(BaseNode):
         if canonical_type in ALLOWED_INLINE_MARKS:
             normalized = dict(mark)
             normalized["type"] = canonical_type
+            if canonical_type == "link":
+                href = self._sanitize_link_href(normalized.get("href") or normalized.get("value"))
+                if not href:
+                    return None, ""
+                normalized["href"] = href
+                normalized.pop("value", None)
             return normalized, ""
         return None, ""
+
+    @staticmethod
+    def _sanitize_link_href(href: Any) -> str:
+        """Return a safe link href, or empty string to drop the link mark."""
+        if not isinstance(href, str):
+            return ""
+        candidate = href.strip()
+        if not candidate or any(ch.isspace() for ch in candidate):
+            return ""
+        parsed = urlparse(candidate)
+        scheme = parsed.scheme.lower()
+        if scheme in {"http", "https"} and parsed.netloc:
+            return candidate
+        if not scheme and candidate.startswith(("#", "/", "./", "../")):
+            return candidate
+        return ""
 
     def _canonical_inline_mark_type(self, mark_type: Any) -> str | None:
         """将mark type映射为Schema所支持的取值"""
